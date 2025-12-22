@@ -1,0 +1,135 @@
+// =============================================================================
+// Astra Language Formal Grammar (EBNF)
+// File: astra_grammar.ebnf
+//
+// Description:
+//     Formal grammar specification for the Astra hybrid AGI language,
+//     covering core syntax, types, intent blocks, rules, and effects.
+//
+// Author: Alex Roussinov
+// Created: 2025-12-22
+// =============================================================================
+
+Program ::= { TopLevelDecl }
+
+TopLevelDecl ::= FunctionDecl
+              | IntentDecl
+              | RuleDecl
+              | ImportDecl
+              | Annotation
+              | Statement
+
+FunctionDecl ::= [EffectAnnotation] ["@grad"] "fn" Identifier "(" [ParamList] ")" ["->" Type] Block
+
+ParamList ::= Param { "," Param }
+
+Param ::= Identifier ":" Type
+
+EffectAnnotation ::= "{" EffectList "}"
+
+EffectList ::= Effect { "," Effect }
+
+Effect ::= "Pure" | "IO" | "Network" | "SelfModify" | Identifier
+
+IntentDecl ::= "intent" Identifier "{" { IntentField } "}"
+
+IntentField ::= "motive" StringLiteral
+              | "action" StringLiteral
+              | Identifier StringLiteral
+              | Identifier Block
+
+RuleDecl ::= "rule" Identifier "(" [ParamList] ")" ["->" Type] Block
+
+Block ::= "{" { Statement } "}"
+
+Statement ::= Expression ";"
+            | LetBinding
+            | MatchExpr
+            | BacktrackBlock
+            | Annotation
+            | ReturnStmt
+
+LetBinding ::= "let" Identifier ["=" Expression] ";"
+
+ReturnStmt ::= "return" Expression ";"
+
+BacktrackBlock ::= "backtrack" Block
+
+Annotation ::= "::" Identifier [ "(" [AnnotationArgs] ")" ]
+
+AnnotationArgs ::= Expression { "," Expression }
+
+Expression ::= Literal
+             | Identifier
+             | FunctionCall
+             | LambdaExpr
+             | MatchExpr
+             | BinaryExpr
+             | UnaryExpr
+             | Block
+             | SymbolicExpr
+             | SelfModifyExpr
+
+Literal ::= IntLiteral | FloatLiteral | StringLiteral | BoolLiteral
+
+FunctionCall ::= Expression "(" [ArgList] ")"
+
+ArgList ::= Expression { "," Expression }
+
+LambdaExpr ::= "fn" "(" [ParamList] ")" Block
+
+MatchExpr ::= "match" Expression "{" { MatchArm } "}"
+
+MatchArm ::= Pattern "=>" Expression ";"
+
+Pattern ::= Identifier
+          | Literal
+          | "_"
+          | "(" [Pattern { "," Pattern }] ")"
+          | Identifier [Pattern | "(" [Pattern { "," Pattern }] ")"]
+
+BinaryExpr ::= Expression BinaryOp Expression
+
+BinaryOp ::= "+" | "-" | "*" | "/" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||"
+
+UnaryExpr ::= UnaryOp Expression
+
+UnaryOp ::= "-" | "!"
+
+SymbolicExpr ::= "symbolic" "(" Identifier ")"
+
+SelfModifyExpr ::= "modify" "(" Identifier "," Expression ")"
+
+Type ::= BaseType
+       | TypeVar
+       | Type "->" EffectAnnotation Type
+       | "Mut" "<" Type ">"
+       | "Ref" "<" Type ">"
+       | "Cap" "<" Type ">"
+       | "Tensor" "<" Shape "," DType ">"
+       | "Symbolic" "<" Prop ">"
+       | "Grad" "<" Type ">"
+       | "DepType" "<" Identifier ":" Type "|" Prop ">"
+       | "Unit"
+       | "Bool"
+       | "Int" "<" Number ">"
+       | "Float" "<" Number ">"
+       | "String"
+
+BaseType ::= Identifier
+
+TypeVar ::= Identifier
+
+Shape ::= "[" [Number | Identifier] { "," [Number | Identifier] } "]"
+
+DType ::= "f32" | "f64" | "i32" | "i64" | "bool" | "string"
+
+Prop ::= Expression
+
+// Tokens (from lexer)
+Identifier   ::= /[a-zA-Z_][a-zA-Z0-9_]*/
+IntLiteral   ::= /-?[0-9]+/
+FloatLiteral ::= /-?[0-9]*\.[0-9]+/
+StringLiteral::= '"' (any character except '"')* '"'
+BoolLiteral  ::= "true" | "false"
+
