@@ -41,11 +41,14 @@
 
 mod tokens;
 mod lexer;
+mod dataset;
 
 use lexer::Lexer;
 use tokens::TokenKind;
+use dataset::IntentDataset;
 
 fn main() {
+    // Part 1: Lexing example
     let source = r#"
         intent astra {
             motive "performance"
@@ -65,7 +68,31 @@ fn main() {
     }
 
     println!("Tokens:");
-    for token in tokens {
+    for token in &tokens {
         println!("{:?} at {:?}", token.kind, token.span);
     }
+
+    // Part 2: Dataset example
+    let mut dataset = IntentDataset::new();
+
+    // Parenting domain (IDs 101-200)
+    dataset.add_intent("Parenting", Some(101), "Monitor child's screen time usage");
+    dataset.add_intent("Parenting", Some(102), "Find age-appropriate educational games");
+    dataset.add_intent("Parenting", Some(103), "Schedule pediatrician visits");
+    dataset.add_intent("Parenting", Some(104), "Search for healthy toddler snacks");
+    dataset.add_intent("Parenting", Some(105), "Teach child to tie shoelaces");
+    // ... add more parenting intents as needed
+
+    // Career Development domain (IDs 201-300)
+    dataset.add_intent("Career Development", Some(201), "Update resume with recent experience");
+    dataset.add_intent("Career Development", Some(202), "Search for job openings in sustainability");
+    dataset.add_intent("Career Development", Some(203), "Find tips for writing cover letters");
+    dataset.add_intent("Career Development", Some(204), "Look for interview preparation techniques");
+    dataset.add_intent("Career Development", Some(205), "Search for online courses to improve skills");
+    // ... add more career development intents as needed
+
+    // Serialize to JSON and print (for export or inspection)
+    let json = serde_json::to_string_pretty(&dataset).unwrap();
+    println!("\nSerialized Intent Dataset JSON:\n{}", json);
 }
+
