@@ -6,6 +6,9 @@
 //      Hierarchical dataset structure for Astra micro intents,
 //      organized by domain keys mapping to lists of granular, actionable micro intents.
 //
+//      This dataset forms the foundation for Astra's intent recognition system,
+//      enabling scalable, modular, and context-aware AGI behaviors.
+//
 //  Author:      Alex Roussinov
 //  Created:     2025-12-22
 // =============================================================================
@@ -16,7 +19,7 @@ use std::collections::HashMap;
 /// A micro intent represents a fine-grained human intention or goal.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MicroIntent {
-    /// Unique ID for the micro intent (optional, e.g., 101, 102, etc.)
+    /// Optional unique ID for the micro intent (e.g., 101, 102, etc.)
     pub id: Option<u32>,
     /// The text description of the micro intent.
     pub description: String,
