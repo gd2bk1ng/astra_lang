@@ -1,59 +1,65 @@
-README — Astra: The Language of Intent, Reality, and AGI
-Astra: The Next Universal Language of Programming
-Welcome to Astra, where programming transcends syntax and semantics to become a living expression of intent, motive, and temporal reality. Astra is not just another compiler or language — it is the grammar of existence, bending the boundaries between code, meaning, and action.
+# Astra — The Language Forged for the Future of Intelligence
 
-Why Astra? Because the future demands more.
-Readable like Python — elegant and intuitive syntax that welcomes creators of all skill levels.
-Reliable like Rust — uncompromising safety and ownership guarantees to build robust, secure systems.
-Expressive like Julia — fluid mathematical and scientific expressiveness for AI, AGI, and beyond.
-Logical like Prolog — embedded symbolic reasoning and declarative power to encode knowledge and intent.
-Differentiable like AI — native support for differentiable programming, enabling seamless integration with machine learning.
-Future-proof like MLIR — designed for extensibility, interoperability, and evolving computational paradigms.
-The TokenKind Revolution: Crafting Reality from Tokens
-Unlike conventional languages that treat tokens as mere syntax, Astra’s TokenKind is a semantic architect. We have intentionally excluded the AtSymbol (@) token — a subtle but profound choice that moves Astra beyond superficial annotations into true intent-driven tokens.
+[![Build Status](https://img.shields.io/github/actions/workflow/status/gd2bk1ng/astra-language/ci.yml?branch=main&style=flat-square)](https://github.com/gd2bk1ng/astra_lang/actions)
+[![License](https://img.shields.io/github/license/gd2bk1ng/astra-language?style=flat-square)](https://github.com/gd2bk1ng/astra_lang/blob/master/LICENSE-APACHE.txt)
+[![Crates.io](https://img.shields.io/crates/v/astra?style=flat-square)](https://crates.io/crates/astra_lang)
+[![Docs](https://img.shields.io/badge/docs-latest-blue?style=flat-square)](https://docs.rs/astra_lang)
 
-This empowers Astra to:
+---
 
-Control and shape the reality of intent and motive at the lexical level.
-Transform programs into living contracts and agents, not static instructions.
-Enable temporal reasoning and adaptive failure handling as first-class language features.
-Bridging Worlds: Rust, Python, JavaScript, and Beyond
-Astra is the universal translator of programming languages, fusing paradigms and ecosystems into a seamless intermediate reality. It bridges:
+## Welcome to Astra: The Dawn of a New Era in Programming
 
-The performance and safety of Rust,
-The readability and agility of Python,
-The ubiquity and dynamism of JavaScript,
-and more — all while preserving the semantic richness required for AGI.
+In a world racing toward artificial intelligence and general intelligence, the tools we use to build that future must evolve — radically and profoundly. **Astra** is that evolution.
 
-Intermediate Reality: Why It Matters
-Astra offers an intermediate reality — a conceptual layer where:
+Astra is not just a programming language. It is a **fundamental shift** in how humans and machines communicate, collaborate, and co-create. It is the language where **intent becomes code, code becomes understanding, and understanding shapes reality**.
 
-Code is not just executed, but understood and adapted.
-Programs reason about their own intent, motives, and temporal context.
-Failure is data, not an exception — enabling resilience and self-healing.
-Temporal logic is baked in, allowing programs to think across time.
-This is the foundation for true AGI software, where language is not a barrier but a bridge to intelligence.
+---
 
-The Astra Experience: Luxury Engineering for Developers
-Just like driving a Porsche or Lamborghini is about precision, power, and exhilaration, programming in Astra is about:
+## Why Astra is the Language of Today and Tomorrow
 
-Precision: Every token, type, and intent is designed for clarity and safety.
-Power: Rich type systems, symbolic reasoning, and differentiable constructs fuel limitless innovation.
-Exhilaration: Writing Astra feels like sculpting reality — bending grammar to your will.
-Join Us on the Journey
-Astra is more than a language — it’s a movement toward a future where programming is synonymous with intelligence, intention, and evolution.
+### Precision Meets Adaptability
 
-Drive the future. Code with Astra.
+Astra combines the **rigor and safety** demanded by modern software with the **expressive power** required for advanced AI and AGI systems. It treats **failure as data**, **time as a first-class citizen**, and **intent as the core language construct** — enabling programs to reason, adapt, and evolve autonomously.
 
-Quick Start
-bash
+### Bridging Paradigms, Uniting Worlds
 
-git clone https://github.com/gd2bk1ng/astra-language.git
-cd astra-language
-cargo build
+Astra seamlessly blends the best features from the world’s leading languages and paradigms:
+
+- The **clarity and readability** that invite creativity and ease of use.
+- The **robust safety and ownership** that guarantee reliability.
+- The **symbolic and logical reasoning** that power intelligent decision-making.
+- The **native differentiability** that integrates AI learning and adaptation naturally.
+
+This makes Astra the **universal translator** — a bridge connecting diverse programming worlds and the next generation of intelligent systems.
+
+### A Language Designed for Purpose and Time
+
+Unlike traditional languages that treat code as static instructions, Astra **embeds purpose and motive** into every program. It understands that software is not just executed — it acts with intent, plans across time, and embraces failure as a path to resilience.
+
+---
+
+## The Story of Astra: From Vision to Reality
+
+We envisioned a language that could **capture the complexity of intelligence itself** — a language that does not merely command machines but invites them to understand and grow.
+
+Astra was born out of this vision: a language crafted to be **both accessible and profound**, **safe and expressive**, **logical and adaptive**. It is the language of pioneers building the future of AI, AGI, and beyond.
+
+---
+
+## Join the Movement Shaping Tomorrow
+
+Astra is more than code — it’s a revolution in programming philosophy and practice. By choosing Astra, you step into the future where:
+
+- Software **thinks, adapts, and evolves**.
+- Developers **craft intent, not just instructions**.
+- Intelligent systems **bridge human creativity and machine precision**.
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/gd2bk1ng/astra_lang.git
+cd astra_lang
+cargo build --release
 cargo test
-Explore the examples, dive into the rich type system, and start crafting programs that think, adapt, and evolve.
-
-Astra — where code becomes intent, and intent shapes reality.
-
-
