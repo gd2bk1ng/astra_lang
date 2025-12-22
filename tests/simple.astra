@@ -1,0 +1,10 @@
+// tests/simple.astra
+
+@grad fn loss(x: Float<64>) -> Float<64> {
+  return x * x;
+}
+
+fn main() {
+  let result = loss(3.0);
+  return result;
+}
