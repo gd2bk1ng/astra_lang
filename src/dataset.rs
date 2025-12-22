@@ -4,10 +4,7 @@
 //
 //  Description:
 //      Hierarchical dataset structure for Astra micro intents,
-//      organized by domain keys mapping to lists of granular, actionable micro intents.
-//
-//      This dataset forms the foundation for Astra's intent recognition system,
-//      enabling scalable, modular, and context-aware AGI behaviors.
+//      with JSON load/save support for easy updates and integration.
 //
 //  Author:      Alex Roussinov
 //  Created:     2025-12-22
@@ -15,36 +12,50 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Write};
+use std::path::Path;
 
-/// A micro intent represents a fine-grained human intention or goal.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MicroIntent {
-    /// Optional unique ID for the micro intent (e.g., 101, 102, etc.)
     pub id: Option<u32>,
-    /// The text description of the micro intent.
     pub description: String,
 }
 
-/// The dataset maps domain keys (e.g., "Parenting") to lists of micro intents.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IntentDataset {
     pub domains: HashMap<String, Vec<MicroIntent>>,
 }
 
 impl IntentDataset {
-    /// Creates a new empty dataset.
     pub fn new() -> Self {
         IntentDataset {
             domains: HashMap::new(),
         }
     }
 
-    /// Adds a micro intent to a domain.
     pub fn add_intent(&mut self, domain: &str, id: Option<u32>, description: &str) {
         let intents = self.domains.entry(domain.to_string()).or_default();
         intents.push(MicroIntent {
             id,
             description: description.to_string(),
         });
+    }
+
+    /// Loads an IntentDataset from a JSON file at the given path.
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let data = fs::read_to_string(path)?;
+        let dataset = serde_json::from_str(&data)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(dataset)
+    }
+
+    /// Saves the IntentDataset to a JSON file at the given path.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut file = fs::File::create(path)?;
+        file.write_all(json.as_bytes())?;
+        Ok(())
     }
 }
