@@ -1,5 +1,3 @@
-cargo init
-
 [package]
 name = "astra-language"
 version = "0.1.0"
