@@ -1,4 +1,4 @@
-use std::fmt;
+use serde::{Deserialize, Serialize};\nuse std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
