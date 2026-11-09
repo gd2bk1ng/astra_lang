@@ -1,65 +1,68 @@
-# Astra — The Language Forged for the Future of Intelligence
+# SyntraLang
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/gd2bk1ng/astra-language/ci.yml?branch=main&style=flat-square)](https://github.com/gd2bk1ng/astra_lang/actions)
-[![License](https://img.shields.io/github/license/gd2bk1ng/astra-language?style=flat-square)](https://github.com/gd2bk1ng/astra_lang/blob/master/LICENSE-APACHE.txt)
-[![Crates.io](https://img.shields.io/crates/v/astra?style=flat-square)](https://crates.io/crates/astra_lang)
-[![Docs](https://img.shields.io/badge/docs-latest-blue?style=flat-square)](https://docs.rs/astra_lang)
+**SyntraLang** is the language foundation for intent-oriented, symbolic, cognitive,
+and AI systems in the Syntra ecosystem.
 
----
+This repository is the continuation of the original Astra language work. Historical
+Astra source is preserved as the foundation while the active language identity and
+public API move forward as **SyntraLang**.
 
-## Welcome to Astra: The Dawn of a New Era in Programming
+## Current milestone: lexical foundation
 
-In a world racing toward artificial intelligence and general intelligence, the tools we use to build that future must evolve — radically and profoundly. **Astra** is that evolution.
+The lexer is being rebuilt as a strict, deterministic compiler component.
 
-Astra is not just a programming language. It is a **fundamental shift** in how humans and machines communicate, collaborate, and co-create. It is the language where **intent becomes code, code becomes understanding, and understanding shapes reality**.
+It provides:
 
----
+- complete punctuation and operator recognition required by the current grammar
+- identifiers and Unicode identifiers
+- integer, floating-point, string, and boolean literals
+- line and block comments
+- stable byte spans with line/column positions
+- deterministic lexical diagnostics
+- malformed-input rejection
+- no silent character loss
+- unit tests for the lexical contract
+- a public library API for downstream AI and compiler projects
 
-## Why Astra is the Language of Today and Tomorrow
+## Library use
 
-### Precision Meets Adaptability
+```rust
+use syntra_lang::{Lexer, TokenKind};
 
-Astra combines the **rigor and safety** demanded by modern software with the **expressive power** required for advanced AI and AGI systems. It treats **failure as data**, **time as a first-class citizen**, and **intent as the core language construct** — enabling programs to reason, adapt, and evolve autonomously.
+let tokens = Lexer::new("intent syntra { motive \"reason\" }")
+    .tokenize()
+    .expect("valid Syntra source");
 
-### Bridging Paradigms, Uniting Worlds
+assert!(matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)));
+```
 
-Astra seamlessly blends the best features from the world’s leading languages and paradigms:
+## Design principle
 
-- The **clarity and readability** that invite creativity and ease of use.
-- The **robust safety and ownership** that guarantee reliability.
-- The **symbolic and logical reasoning** that power intelligent decision-making.
-- The **native differentiability** that integrates AI learning and adaptation naturally.
+SyntraLang is intended to become a reusable language infrastructure layer.
 
-This makes Astra the **universal translator** — a bridge connecting diverse programming worlds and the next generation of intelligent systems.
+The lexer must therefore remain:
 
-### A Language Designed for Purpose and Time
+1. deterministic
+2. explicit
+3. lossless with respect to recognized source semantics
+4. strict about malformed input
+5. independently testable
+6. stable enough for compiler, IDE, AI-agent, and Syntra Kernel consumers
 
-Unlike traditional languages that treat code as static instructions, Astra **embeds purpose and motive** into every program. It understands that software is not just executed — it acts with intent, plans across time, and embraces failure as a path to resilience.
+Advanced AI semantics, symbolic reasoning, cognition, self-modification, and runtime
+behavior belong to later compiler/runtime layers. The lexer establishes the trusted
+front door for those systems.
 
----
+## Historical continuity
 
-## The Story of Astra: From Vision to Reality
+The original Astra implementation is not discarded. Existing grammar, parser, AST,
+type-system, and research concepts are being recovered and reconciled rather than
+rewritten blindly.
 
-We envisioned a language that could **capture the complexity of intelligence itself** — a language that does not merely command machines but invites them to understand and grow.
+The active development branch for this recovery is:
 
-Astra was born out of this vision: a language crafted to be **both accessible and profound**, **safe and expressive**, **logical and adaptive**. It is the language of pioneers building the future of AI, AGI, and beyond.
+`syntra_lang`
 
----
+## License
 
-## Join the Movement Shaping Tomorrow
-
-Astra is more than code — it’s a revolution in programming philosophy and practice. By choosing Astra, you step into the future where:
-
-- Software **thinks, adapts, and evolves**.
-- Developers **craft intent, not just instructions**.
-- Intelligent systems **bridge human creativity and machine precision**.
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/gd2bk1ng/astra_lang.git
-cd astra_lang
-cargo build --release
-cargo test
+MIT OR Apache-2.0
