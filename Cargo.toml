@@ -1,16 +1,16 @@
 [package]
-name = "astra_lang"
+name = "syntra_lang"
 version = "0.1.0"
 authors = ["Alex Roussinov <gd2bk1ng@proton.me>"]
 edition = "2024"
 description = """
-Astra language core: an intent-driven, AGI-ready programming language designed to express
-complex motives, intents, and adaptive behaviors for artificial general intelligence.
+SyntraLang: an intent-oriented language core for AI, symbolic reasoning,
+cognitive systems, and future Syntra Kernel tooling.
 """
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/gd2bk1ng/astra_lang"
 readme = "README.md"
-keywords = ["programming language", "AGI", "intent-driven", "domain-specific language", "adaptive"]
+keywords = ["programming-language", "AI", "intent", "symbolic-reasoning", "cognitive"]
 categories = ["programming-language", "artificial-intelligence", "domain-specific-language"]
 
 [dependencies]
