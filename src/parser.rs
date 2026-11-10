@@ -111,7 +111,15 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
 
     fn parse_type(&mut self) -> Result<TypeRef<'src>, ParseError<'src>> {
         let start = self.current_span().map(|s| s.start).unwrap_or(0);
-        let name = self.expect_identifier()?;
+        let name = match self.current() {
+            Some(token) => match token.kind {
+                TokenKind::Identifier(name) => { self.bump(); name }
+                TokenKind::IntLiteral(_) => { let lexeme = token.lexeme; self.bump(); lexeme }
+                TokenKind::FloatLiteral(_) => { let lexeme = token.lexeme; self.bump(); lexeme }
+                _ => return Err(ParseError::unexpected("type or type argument", token)),
+            },
+            None => return Err(ParseError::UnexpectedEof { expected: "type", span: Span::new(0, 0) }),
+        };
         let mut arguments = Vec::new();
         if self.at(TokenKind::LessThan) {
             self.bump();
