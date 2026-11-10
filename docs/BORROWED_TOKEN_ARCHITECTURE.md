@@ -176,3 +176,62 @@ Before the parser is considered production-ready, add tests for:
 - parser behavior after source-buffer mutation is impossible by construction;
 - owned conversion boundaries, if introduced.
 
+
+## 13. Parser cursor and AST boundary
+
+The Phase 2 parser now uses a two-lifetime cursor:
+
+`TokenCursor<'tokens, 'src>`
+
+where:
+
+- `'tokens` is the borrow of the token slice;
+- `'src` is the lifetime of source text inside those tokens.
+
+This prevents the parser from taking ownership of the lexical stream.
+
+The syntax tree is correspondingly parameterized as `AST<'src>` through
+`Program<'src>` and its child nodes. Identifier names, string contents, and
+other source-bearing values borrow directly from the original source buffer.
+
+Collections such as declaration and statement lists still use `Vec`. The
+current milestone therefore provides zero-copy **source data**, not a claim of
+zero heap allocation.
+
+## 14. Parser implementation status
+
+The initial recursive-descent infrastructure is now present for:
+
+- top-level `fn`, `intent`, and `rule` declarations;
+- `@grad fn` declaration recognition;
+- typed parameter lists;
+- generic type references;
+- structural blocks;
+- `let`, `return`, and `backtrack` statements;
+- expression statements;
+- unary and binary expressions;
+- function calls;
+- symbolic expressions;
+- self-modification syntax;
+- borrowed literals;
+- source-aware parse errors.
+
+This is intentionally a parser foundation, not the completed language grammar.
+
+Cognitive semantics remain outside the parser and belong to the semantic
+verification layer.
+
+## 15. Next parser hardening
+
+Before expanding the cognitive grammar, the parser should receive:
+
+1. grammar conformance fixtures;
+2. diagnostic recovery infrastructure;
+3. match/pattern syntax;
+4. effect clauses;
+5. full type grammar;
+6. intent member grammar beyond the initial string/block forms;
+7. allocation measurements;
+8. parser fuzz/property testing;
+9. AST invariants and versioning policy.
+
