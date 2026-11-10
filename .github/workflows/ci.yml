@@ -24,6 +24,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Format
+        run: cargo fmt --all -- --check
+
       - name: Cargo check
         run: cargo check --all-targets
 
