@@ -100,6 +100,8 @@ The active development branch is:
 - source-aware diagnostics engine — implemented
 - grammar conformance fixtures — in progress
 - cognitive primitive parser specification — staged
+- borrowed cognitive AST substrate — implemented
+- cognitive parser integration — next
 - full cognitive AST parsing — gated on parser verification
 
 ### Phase 3 — Semantics
