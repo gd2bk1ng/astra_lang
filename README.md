@@ -62,6 +62,13 @@ keeps the token contract stable and avoids the historical lexer/parser mismatch
 where one layer treated a word as a dedicated token and another expected an
 identifier.
 
+## Language contract
+
+The semantic direction of SyntraLang is documented in
+`docs/SYNTRALANG_LANGUAGE_CONTRACT.md`. It defines the long-term language
+concepts and architectural boundaries without pretending that unimplemented
+features already exist.
+
 ## Historical continuity
 
 The historical Astra implementation is preserved for recovery and research.
