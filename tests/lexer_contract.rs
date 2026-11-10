@@ -66,3 +66,39 @@ fn public_numeric_contract_rejects_malformed_decimal_floats() {
         );
     }
 }
+
+
+#[test]
+fn public_tokens_borrow_original_source() {
+    let source = String::from("intent syntra");
+    let tokens = Lexer::new(&source)
+        .tokenize()
+        .expect("source should lex");
+
+    assert!(std::ptr::eq(tokens[0].lexeme.as_ptr(), source.as_ptr()));
+    assert_eq!(tokens[0].lexeme, "intent");
+
+    assert!(std::ptr::eq(
+        tokens[1].lexeme.as_ptr(),
+        source["intent ".len()..].as_ptr()
+    ));
+}
+
+#[test]
+fn public_string_tokens_preserve_raw_source_without_decoding() {
+    let source = String::from(r#"value "a\nb""#);
+    let tokens = Lexer::new(&source)
+        .tokenize()
+        .expect("source should lex");
+
+    let string = tokens
+        .iter()
+        .find(|token| matches!(token.kind, TokenKind::StringLiteral { .. }))
+        .expect("string token");
+
+    assert_eq!(
+        string.kind,
+        TokenKind::StringLiteral { raw: r#"a\nb"# }
+    );
+    assert_eq!(string.lexeme, r#""a\nb""#);
+}
