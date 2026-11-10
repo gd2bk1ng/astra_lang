@@ -324,7 +324,10 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        if !has_digits || text.ends_with('_') || text.contains("__") {
+        // Decimal floats require digits on both sides of the decimal point.
+        // This keeps the lexical contract unambiguous: "1." is not a float,
+        // and the trailing dot remains available to a future punctuation rule.
+        if !has_digits || text.ends_with('_') || text.ends_with('.') || text.contains("__") {
             return Err(LexError::InvalidNumber {
                 lexeme: text,
                 span: self.make_span(start, self.offset(), line, column),
@@ -664,6 +667,21 @@ mod tests {
 
         assert!(matches!(
             Lexer::new("1.2.3").tokenize(),
+            Err(LexError::InvalidNumber { .. })
+        ));
+
+        assert!(matches!(
+            Lexer::new("1.").tokenize(),
+            Err(LexError::InvalidNumber { .. })
+        ));
+
+        assert!(matches!(
+            Lexer::new("1_.2").tokenize(),
+            Err(LexError::InvalidNumber { .. })
+        ));
+
+        assert!(matches!(
+            Lexer::new("1._2").tokenize(),
             Err(LexError::InvalidNumber { .. })
         ));
     }
