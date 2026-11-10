@@ -30,6 +30,18 @@ impl<'a> ParseError<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct ParseReport<'a> {
+    pub program: Program<'a>,
+    pub errors: Vec<ParseError<'a>>,
+}
+
+impl<'a> ParseReport<'a> {
+    pub fn is_success(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
 pub struct Parser<'tokens, 'src> { cursor: TokenCursor<'tokens, 'src> }
 
 impl<'tokens, 'src> Parser<'tokens, 'src> {
@@ -38,10 +50,63 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
 
     pub fn parse_program(&mut self) -> Result<Program<'src>, ParseError<'src>> {
         let start = self.current_span().map(|s| s.start).unwrap_or(0);
+        let start_position = self.current_span().map(|s| (s.line, s.column)).unwrap_or((1, 1));
         let mut declarations = Vec::new();
-        while !self.cursor.is_eof() { declarations.push(self.parse_declaration()?); }
+        while !self.cursor.is_eof() {
+            declarations.push(self.parse_declaration()?);
+        }
         let end = self.current_span().map(|s| s.end).unwrap_or(start);
-        Ok(Program { declarations, span: Span::with_pos(start, end, 1, 1) })
+        Ok(Program {
+            declarations,
+            span: Span::with_pos(start, end, start_position.0, start_position.1),
+        })
+    }
+
+    /// Parse as much of the program as possible, recovering at stable syntax
+    /// boundaries instead of aborting after the first malformed declaration.
+    ///
+    /// Recovery consumes through a semicolon or a closing brace. This keeps
+    /// malformed input from trapping the parser in a no-progress loop while
+    /// preserving the normal fail-fast `parse_program` API.
+    pub fn parse_program_recovering(&mut self) -> ParseReport<'src> {
+        let start = self.current_span().map(|s| s.start).unwrap_or(0);
+        let start_position = self.current_span().map(|s| (s.line, s.column)).unwrap_or((1, 1));
+        let mut declarations = Vec::new();
+        let mut errors = Vec::new();
+
+        while !self.cursor.is_eof() {
+            match self.parse_declaration() {
+                Ok(declaration) => declarations.push(declaration),
+                Err(error) => {
+                    errors.push(error);
+                    self.synchronize();
+                }
+            }
+        }
+
+        let end = self.current_span().map(|s| s.end).unwrap_or(start);
+        ParseReport {
+            program: Program {
+                declarations,
+                span: Span::with_pos(start, end, start_position.0, start_position.1),
+            },
+            errors,
+        }
+    }
+
+    fn synchronize(&mut self) {
+        while let Some(token) = self.current() {
+            match token.kind {
+                TokenKind::Semicolon | TokenKind::RBrace => {
+                    self.bump();
+                    break;
+                }
+                TokenKind::Eof => break,
+                _ => {
+                    self.bump();
+                }
+            }
+        }
     }
 
     fn parse_declaration(&mut self) -> Result<Declaration<'src>, ParseError<'src>> {
@@ -248,6 +313,8 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     fn current_span(&self) -> Option<Span> { self.current().map(|t| t.span) }
     fn previous_end(&self) -> Option<usize> { self.cursor.previous().map(|t| t.span.end) }
     fn bump(&mut self) -> Option<&'tokens Token<'src>> { self.cursor.bump() }
+
+    fn current(&self) -> Option<&'tokens Token<'src>> { self.cursor.current() }
 }
 
 trait ExpressionSpan { fn span(&self) -> Span; }
