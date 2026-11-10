@@ -176,7 +176,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                     self.bump();
                     match self.current().map(|t| t.kind) {
                         Some(TokenKind::StringLiteral { raw }) => {
-                            let end = self.bump().map(|t| t.span.end).unwrap_or(member_start.end);
+                            self.bump();
                             IntentValue::String(raw)
                         }
                         Some(TokenKind::LBrace) => IntentValue::Block(self.parse_block()?),
@@ -234,7 +234,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "goal member",
                 span: start_token.span,
             })?;
@@ -317,7 +317,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let token = self.current().ok_or(ParseError::UnexpectedEof {
+            let token = *self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "effect item",
                 span: start_token.span,
             })?;
@@ -358,7 +358,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "uncertainty member",
                 span: start_token.span,
             })?;
@@ -426,7 +426,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "governance member",
                 span: start_token.span,
             })?;
