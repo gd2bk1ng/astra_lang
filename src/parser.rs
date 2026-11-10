@@ -15,6 +15,7 @@ impl<'tokens, 'src> TokenCursor<'tokens, 'src> {
     pub fn bump(&mut self) -> Option<&'tokens Token<'src>> { let t = self.current(); if t.is_some() { self.position += 1; } t }
     pub fn is_eof(&self) -> bool { self.current().map(|t| matches!(t.kind, TokenKind::Eof)).unwrap_or(true) }
     pub fn remaining(&self) -> &'tokens [Token<'src>] { self.tokens.get(self.position..).unwrap_or(&[]) }
+    pub fn previous(&self) -> Option<&'tokens Token<'src>> { self.position.checked_sub(1).and_then(|i| self.tokens.get(i)) }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -245,7 +246,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     fn peek_word(&self, n: usize, word: &str) -> bool { self.peek(n).is_some_and(|t| matches!(t.kind, TokenKind::Identifier(v) if v == word)) }
     fn peek_kind(&self, n: usize) -> Option<TokenKind<'src>> { self.peek(n).map(|t| t.kind) }
     fn current_span(&self) -> Option<Span> { self.current().map(|t| t.span) }
-    fn previous_end(&self) -> Option<usize> { self.cursor.peek(usize::MAX).map(|t| t.span.end).or_else(|| self.current().map(|t| t.span.start)) }
+    fn previous_end(&self) -> Option<usize> { self.cursor.previous().map(|t| t.span.end) }
     fn bump(&mut self) -> Option<&'tokens Token<'src>> { self.cursor.bump() }
 }
 
