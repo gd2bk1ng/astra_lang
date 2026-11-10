@@ -103,7 +103,7 @@ Prop ::= Expression
 
 # Lexical contract
 
-Identifier   ::= /Unicode alphabetic or '_' followed by Unicode alphanumeric or '_'+/
+Identifier   ::= /XID_Start or '_' followed by zero or more XID_Continue characters/
 IntLiteral   ::= /[0-9]+ with optional '_' separators/
 FloatLiteral ::= /[0-9]+ '.' [0-9]+ with optional '_' separators/
                | '.' [0-9]+ with optional '_' separators/
