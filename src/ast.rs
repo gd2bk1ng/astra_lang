@@ -17,7 +17,73 @@ pub struct Intent<'a> { pub name: &'a str, pub members: Vec<IntentMember<'a>>, p
 pub struct IntentMember<'a> { pub name: &'a str, pub value: IntentValue<'a>, pub span: Span }
 
 #[derive(Debug, PartialEq)]
-pub enum IntentValue<'a> { String(&'a str), Block(Block<'a>) }
+pub enum IntentValue<'a> {
+    String(&'a str),
+    Block(Block<'a>),
+    Goal(Goal<'a>),
+    Effects(Effects<'a>),
+    Uncertainty(Uncertainty<'a>),
+    Governance(Governance<'a>),
+}
+
+/// A named cognitive goal nested inside an intent.
+#[derive(Debug, PartialEq)]
+pub struct Goal<'a> {
+    pub name: &'a str,
+    pub members: Vec<GoalMember<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum GoalMember<'a> {
+    Description { value: &'a str, span: Span },
+    Priority { value: Expression<'a>, span: Span },
+    Condition { value: Expression<'a>, span: Span },
+    Target { value: Expression<'a>, span: Span },
+}
+
+/// Declared effect capabilities for a cognitive construct.
+#[derive(Debug, PartialEq)]
+pub struct Effects<'a> {
+    pub items: Vec<EffectItem<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct EffectItem<'a> {
+    pub name: &'a str,
+    pub span: Span,
+}
+
+/// Structured uncertainty metadata. Semantics are intentionally deferred to verification.
+#[derive(Debug, PartialEq)]
+pub struct Uncertainty<'a> {
+    pub members: Vec<UncertaintyMember<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UncertaintyMember<'a> {
+    Confidence { value: Expression<'a>, span: Span },
+    Assumption { value: &'a str, span: Span },
+    Evidence { value: Expression<'a>, span: Span },
+    Source { value: &'a str, span: Span },
+}
+
+/// Authority and policy metadata. An approval field is not proof of actual approval.
+#[derive(Debug, PartialEq)]
+pub struct Governance<'a> {
+    pub members: Vec<GovernanceMember<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum GovernanceMember<'a> {
+    Requires { value: &'a str, span: Span },
+    Approval { value: &'a str, span: Span },
+    Policy { value: &'a str, span: Span },
+    Constraint { value: Expression<'a>, span: Span },
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Rule<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span }
