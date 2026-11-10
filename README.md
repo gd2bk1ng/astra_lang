@@ -95,8 +95,12 @@ The active development branch is:
 - parser cursor — implemented
 - borrowed AST layout — implemented
 - initial recursive-descent parser — implemented
-- cognitive primitive parser specification
-- grammar conformance tests
+- precedence and nested-block parser fixtures — implemented
+- parser recovery boundaries — implemented
+- source-aware diagnostics engine — implemented
+- grammar conformance fixtures — in progress
+- cognitive primitive parser specification — staged
+- full cognitive AST parsing — gated on parser verification
 
 ### Phase 3 — Semantics
 - type system
@@ -120,3 +124,39 @@ The active development branch is:
 ## License
 
 MIT OR Apache-2.0
+
+
+## Parser hardening
+
+The parser now has two explicit operating modes:
+
+- `parse_program()` — fail-fast parsing for compiler pipelines that want the first syntax error;
+- `parse_program_recovering()` — best-effort parsing that records multiple syntax errors and synchronizes on semicolons or closing braces.
+
+Diagnostics preserve the original borrowed source slice and report:
+
+- line and column;
+- byte start/end offsets;
+- source-line context;
+- a stable diagnostic code;
+- a rendered caret span.
+
+The recovery layer is deliberately conservative. It establishes deterministic
+progress without pretending that malformed syntax can always be repaired.
+
+## Cognitive syntax staging
+
+The first cognitive syntax hooks are documented in
+`docs/COGNITIVE_SYNTAX_STAGING.md`.
+
+The staged concepts are:
+
+- `intent`
+- `goal`
+- `effects`
+- `uncertainty`
+- `governance`
+
+These remain parser/AST extension points until the ordinary syntax substrate
+passes its verification gates. Cognitive semantics and governance verification
+remain separate from parsing.
