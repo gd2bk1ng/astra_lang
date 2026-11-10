@@ -16,6 +16,7 @@ categories = ["programming-language", "artificial-intelligence", "domain-specifi
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+unicode-ident = "1.0"
 
 [package.metadata.docs.rs]
 all-features = true
