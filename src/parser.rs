@@ -141,23 +141,371 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     }
 
     fn parse_intent(&mut self) -> Result<Intent<'src>, ParseError<'src>> {
-        let start = self.expect_word("intent")?.span.start;
+        let start_token = self.expect_word("intent")?;
+        let start = start_token.span.start;
+        let name = self.expect_identifier()?;
+        self.expect(TokenKind::LBrace, "{")?;
+
+        let mut members = Vec::new();
+        while !self.at(TokenKind::RBrace) {
+            if self.cursor.is_eof() {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "}",
+                    span: Span::with_pos(start, start, start_token.span.line, start_token.span.column),
+                });
+            }
+
+            let member_start = self.current_span().unwrap_or(start_token.span);
+            let member_name = match self.current() {
+                Some(token) => match token.kind {
+                    TokenKind::Identifier(name) => name,
+                    _ => return Err(ParseError::unexpected("intent member", token)),
+                },
+                None => return Err(ParseError::UnexpectedEof {
+                    expected: "intent member",
+                    span: member_start,
+                }),
+            };
+
+            let value = match member_name {
+                "goal" => IntentValue::Goal(self.parse_goal()?),
+                "effects" => IntentValue::Effects(self.parse_effects()?),
+                "uncertainty" => IntentValue::Uncertainty(self.parse_uncertainty()?),
+                "governance" => IntentValue::Governance(self.parse_governance()?),
+                _ => {
+                    self.bump();
+                    match self.current().map(|t| t.kind) {
+                        Some(TokenKind::StringLiteral { raw }) => {
+                            let end = self.bump().map(|t| t.span.end).unwrap_or(member_start.end);
+                            IntentValue::String(raw)
+                        }
+                        Some(TokenKind::LBrace) => IntentValue::Block(self.parse_block()?),
+                        _ => {
+                            let t = self.current().ok_or(ParseError::UnexpectedEof {
+                                expected: "string literal or block",
+                                span: member_start,
+                            })?;
+                            return Err(ParseError::unexpected("string literal or block", t));
+                        }
+                    }
+                }
+            };
+
+            let end = match &value {
+                IntentValue::String(_) => self.previous_end().unwrap_or(member_start.end),
+                IntentValue::Block(block) => block.span.end,
+                IntentValue::Goal(goal) => goal.span.end,
+                IntentValue::Effects(effects) => effects.span.end,
+                IntentValue::Uncertainty(uncertainty) => uncertainty.span.end,
+                IntentValue::Governance(governance) => governance.span.end,
+            };
+            members.push(IntentMember {
+                name: member_name,
+                value,
+                span: Span::with_pos(
+                    member_start.start,
+                    end,
+                    member_start.line,
+                    member_start.column,
+                ),
+            });
+        }
+
+        let close = self.expect(TokenKind::RBrace, "}")?;
+        Ok(Intent {
+            name,
+            members,
+            span: Span::with_pos(start, close.span.end, start_token.span.line, start_token.span.column),
+        })
+    }
+
+    fn parse_goal(&mut self) -> Result<Goal<'src>, ParseError<'src>> {
+        let start_token = self.expect_word("goal")?;
+        let start = start_token.span.start;
         let name = self.expect_identifier()?;
         self.expect(TokenKind::LBrace, "{")?;
         let mut members = Vec::new();
+
         while !self.at(TokenKind::RBrace) {
-            let member_start = self.current_span().map(|s| s.start).unwrap_or(start);
-            let member_name = self.expect_identifier()?;
-            let value = match self.current().map(|t| t.kind) {
-                Some(TokenKind::StringLiteral { raw }) => { self.bump(); IntentValue::String(raw) }
-                Some(TokenKind::LBrace) => IntentValue::Block(self.parse_block()?),
-                _ => { let t = self.current().ok_or(ParseError::UnexpectedEof { expected: "intent member", span: Span::new(member_start, member_start) })?; return Err(ParseError::unexpected("string literal or block", t)); }
+            if self.cursor.is_eof() {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "}",
+                    span: start_token.span,
+                });
+            }
+
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+                expected: "goal member",
+                span: start_token.span,
+            })?;
+            let member_name = match member_token.kind {
+                TokenKind::Identifier(name) => name,
+                _ => return Err(ParseError::unexpected("goal member", member_token)),
             };
-            let end = match &value { IntentValue::String(_) => self.previous_end().unwrap_or(member_start), IntentValue::Block(b) => b.span.end };
-            members.push(IntentMember { name: member_name, value, span: Span::with_pos(member_start, end, 1, 1) });
+            let member_start = member_token.span;
+
+            self.bump();
+            let member = match member_name {
+                "description" => {
+                    let token = self.expect_string_literal()?;
+                    GoalMember::Description {
+                        value: token.raw,
+                        span: Span::with_pos(
+                            member_start.start,
+                            token.span.end,
+                            member_start.line,
+                            member_start.column,
+                        ),
+                    }
+                }
+                "priority" => {
+                    let value = self.parse_expression()?;
+                    let span = Span::with_pos(
+                        member_start.start,
+                        value.span().end,
+                        member_start.line,
+                        member_start.column,
+                    );
+                    GoalMember::Priority { value, span }
+                }
+                "condition" => {
+                    let value = self.parse_expression()?;
+                    let span = Span::with_pos(
+                        member_start.start,
+                        value.span().end,
+                        member_start.line,
+                        member_start.column,
+                    );
+                    GoalMember::Condition { value, span }
+                }
+                "target" => {
+                    let value = self.parse_expression()?;
+                    let span = Span::with_pos(
+                        member_start.start,
+                        value.span().end,
+                        member_start.line,
+                        member_start.column,
+                    );
+                    GoalMember::Target { value, span }
+                }
+                _ => return Err(ParseError::unexpected("description, priority, condition, or target", member_token)),
+            };
+
+            members.push(member);
+            self.consume_optional_semicolon();
         }
+
         let close = self.expect(TokenKind::RBrace, "}")?;
-        Ok(Intent { name, members, span: Span::with_pos(start, close.span.end, 1, 1) })
+        Ok(Goal {
+            name,
+            members,
+            span: Span::with_pos(start, close.span.end, start_token.span.line, start_token.span.column),
+        })
+    }
+
+    fn parse_effects(&mut self) -> Result<Effects<'src>, ParseError<'src>> {
+        let start_token = self.expect_word("effects")?;
+        let start = start_token.span.start;
+        self.expect(TokenKind::LBrace, "{")?;
+        let mut items = Vec::new();
+
+        while !self.at(TokenKind::RBrace) {
+            if self.cursor.is_eof() {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "}",
+                    span: start_token.span,
+                });
+            }
+
+            let token = self.current().ok_or(ParseError::UnexpectedEof {
+                expected: "effect item",
+                span: start_token.span,
+            })?;
+            let name = match token.kind {
+                TokenKind::Identifier(name) => name,
+                _ => return Err(ParseError::unexpected("effect identifier", token)),
+            };
+            let span = token.span;
+            self.bump();
+            items.push(EffectItem { name, span });
+
+            if self.at(TokenKind::Comma) {
+                self.bump();
+            } else if !self.at(TokenKind::RBrace) {
+                let current = self.current().unwrap();
+                return Err(ParseError::unexpected("',' or '}'", current));
+            }
+        }
+
+        let close = self.expect(TokenKind::RBrace, "}")?;
+        Ok(Effects {
+            items,
+            span: Span::with_pos(start, close.span.end, start_token.span.line, start_token.span.column),
+        })
+    }
+
+    fn parse_uncertainty(&mut self) -> Result<Uncertainty<'src>, ParseError<'src>> {
+        let start_token = self.expect_word("uncertainty")?;
+        let start = start_token.span.start;
+        self.expect(TokenKind::LBrace, "{")?;
+        let mut members = Vec::new();
+
+        while !self.at(TokenKind::RBrace) {
+            if self.cursor.is_eof() {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "}",
+                    span: start_token.span,
+                });
+            }
+
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+                expected: "uncertainty member",
+                span: start_token.span,
+            })?;
+            let member_name = match member_token.kind {
+                TokenKind::Identifier(name) => name,
+                _ => return Err(ParseError::unexpected("uncertainty member", member_token)),
+            };
+            let member_start = member_token.span;
+            self.bump();
+
+            let member = match member_name {
+                "confidence" => {
+                    let value = self.parse_expression()?;
+                    UncertaintyMember::Confidence {
+                        span: Span::with_pos(member_start.start, value.span().end, member_start.line, member_start.column),
+                        value,
+                    }
+                }
+                "assumption" => {
+                    let token = self.expect_string_literal()?;
+                    UncertaintyMember::Assumption {
+                        value: token.raw,
+                        span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
+                    }
+                }
+                "evidence" => {
+                    let value = self.parse_expression()?;
+                    UncertaintyMember::Evidence {
+                        span: Span::with_pos(member_start.start, value.span().end, member_start.line, member_start.column),
+                        value,
+                    }
+                }
+                "source" => {
+                    let token = self.expect_string_literal()?;
+                    UncertaintyMember::Source {
+                        value: token.raw,
+                        span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
+                    }
+                }
+                _ => return Err(ParseError::unexpected("confidence, assumption, evidence, or source", member_token)),
+            };
+
+            members.push(member);
+            self.consume_optional_semicolon();
+        }
+
+        let close = self.expect(TokenKind::RBrace, "}")?;
+        Ok(Uncertainty {
+            members,
+            span: Span::with_pos(start, close.span.end, start_token.span.line, start_token.span.column),
+        })
+    }
+
+    fn parse_governance(&mut self) -> Result<Governance<'src>, ParseError<'src>> {
+        let start_token = self.expect_word("governance")?;
+        let start = start_token.span.start;
+        self.expect(TokenKind::LBrace, "{")?;
+        let mut members = Vec::new();
+
+        while !self.at(TokenKind::RBrace) {
+            if self.cursor.is_eof() {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "}",
+                    span: start_token.span,
+                });
+            }
+
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
+                expected: "governance member",
+                span: start_token.span,
+            })?;
+            let member_name = match member_token.kind {
+                TokenKind::Identifier(name) => name,
+                _ => return Err(ParseError::unexpected("governance member", member_token)),
+            };
+            let member_start = member_token.span;
+            self.bump();
+
+            let member = match member_name {
+                "requires" => {
+                    let token = self.expect_identifier_token()?;
+                    GovernanceMember::Requires {
+                        value: match token.kind { TokenKind::Identifier(value) => value, _ => unreachable!() },
+                        span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
+                    }
+                }
+                "approval" => {
+                    let token = self.expect_identifier_token()?;
+                    GovernanceMember::Approval {
+                        value: match token.kind { TokenKind::Identifier(value) => value, _ => unreachable!() },
+                        span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
+                    }
+                }
+                "policy" => {
+                    let token = self.expect_string_literal()?;
+                    GovernanceMember::Policy {
+                        value: token.raw,
+                        span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
+                    }
+                }
+                "constraint" => {
+                    let value = self.parse_expression()?;
+                    GovernanceMember::Constraint {
+                        value,
+                        span: Span::with_pos(member_start.start, value.span().end, member_start.line, member_start.column),
+                    }
+                }
+                _ => return Err(ParseError::unexpected("requires, approval, policy, or constraint", member_token)),
+            };
+
+            members.push(member);
+            self.consume_optional_semicolon();
+        }
+
+        let close = self.expect(TokenKind::RBrace, "}")?;
+        Ok(Governance {
+            members,
+            span: Span::with_pos(start, close.span.end, start_token.span.line, start_token.span.column),
+        })
+    }
+
+    fn expect_string_literal(&mut self) -> Result<Token<'src>, ParseError<'src>> {
+        let token = self.current().ok_or(ParseError::UnexpectedEof {
+            expected: "string literal",
+            span: Span::new(0, 0),
+        })?;
+        match token.kind {
+            TokenKind::StringLiteral { .. } => Ok(*self.bump().unwrap()),
+            _ => Err(ParseError::unexpected("string literal", token)),
+        }
+    }
+
+    fn expect_identifier_token(&mut self) -> Result<Token<'src>, ParseError<'src>> {
+        let token = self.current().ok_or(ParseError::UnexpectedEof {
+            expected: "identifier",
+            span: Span::new(0, 0),
+        })?;
+        match token.kind {
+            TokenKind::Identifier(_) => Ok(*self.bump().unwrap()),
+            _ => Err(ParseError::unexpected("identifier", token)),
+        }
+    }
+
+    fn consume_optional_semicolon(&mut self) {
+        if self.at(TokenKind::Semicolon) {
+            self.bump();
+        }
     }
 
     fn parse_params(&mut self) -> Result<Vec<Parameter<'src>>, ParseError<'src>> {
