@@ -3,15 +3,15 @@ use std::fmt;
 use unicode_ident::{is_xid_continue, is_xid_start};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LexError {
+pub enum LexError<'a> {
     UnexpectedCharacter { ch: char, span: Span },
     UnterminatedString { span: Span },
-    InvalidEscape { escape: String, span: Span },
+    InvalidEscape { escape: &'a str, span: Span },
     UnterminatedBlockComment { span: Span },
-    InvalidNumber { lexeme: String, span: Span },
+    InvalidNumber { lexeme: &'a str, span: Span },
 }
 
-impl fmt::Display for LexError {
+impl fmt::Display for LexError<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnexpectedCharacter { ch, span } =>
@@ -48,7 +48,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
+    pub fn tokenize(mut self) -> Result<Vec<Token<'a>>, LexError<'a>> {
         let mut out = Vec::new();
         loop {
             let token = self.next_token()?;
@@ -60,7 +60,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Token, LexError> {
+    pub fn next_token(&mut self) -> Result<Token<'a>, LexError<'a>> {
         self.skip_space_and_comments()?;
 
         let (start, ch) = match self.peeked {
@@ -197,7 +197,7 @@ impl<'a> Lexer<'a> {
         end: usize,
         line: usize,
         column: usize,
-    ) -> Token {
+    ) -> Token<'a> {
         Token::with_lexeme(
             kind,
             self.make_span(start, end, line, column),
@@ -280,7 +280,7 @@ impl<'a> Lexer<'a> {
             _ => TokenKind::Identifier(raw.to_owned()),
         };
 
-        Token::with_lexeme(
+        Token::new(
             kind,
             self.make_span(start, end, line, column),
             raw,
@@ -292,14 +292,12 @@ impl<'a> Lexer<'a> {
         start: usize,
         line: usize,
         column: usize,
-    ) -> Result<Token, LexError> {
-        let mut text = String::new();
+    ) -> Result<Token<'a>, LexError<'a>> {
         let mut has_dot = false;
         let mut has_digits = false;
 
         if self.peek() == Some('.') {
             has_dot = true;
-            text.push('.');
             self.bump();
         }
 
@@ -307,16 +305,13 @@ impl<'a> Lexer<'a> {
             match c {
                 '0'..='9' => {
                     has_digits = true;
-                    text.push(c);
                     self.bump();
                 }
                 '_' => {
-                    text.push(c);
                     self.bump();
                 }
                 '.' if !has_dot => {
                     has_dot = true;
-                    text.push('.');
                     self.bump();
                 }
                 '.' => break,
@@ -324,68 +319,57 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // Decimal floats require digits on both sides of the decimal point.
-        // This keeps the lexical contract unambiguous: "1." is not a float,
-        // and the trailing dot remains available to a future punctuation rule.
-        if !has_digits || text.ends_with('_') || text.ends_with('.') || text.contains("__") {
+        let end = self.offset();
+        let raw = &self.input[start..end];
+
+        if !has_digits || raw.ends_with('_') || raw.ends_with('.') || raw.contains("__") {
             return Err(LexError::InvalidNumber {
-                lexeme: text,
-                span: self.make_span(start, self.offset(), line, column),
+                lexeme: raw,
+                span: self.make_span(start, end, line, column),
             });
         }
 
-        // A second dot followed by a digit is almost certainly a malformed
-        // numeric literal, rather than two valid tokens.
         if self.peek() == Some('.') && self.next_is_digit() {
-            text.push('.');
             self.bump();
 
             while let Some(c) = self.peek() {
                 if c.is_ascii_digit() || c == '_' {
-                    text.push(c);
                     self.bump();
                 } else {
                     break;
                 }
             }
 
+            let invalid_end = self.offset();
             return Err(LexError::InvalidNumber {
-                lexeme: text,
-                span: self.make_span(start, self.offset(), line, column),
+                lexeme: &self.input[start..invalid_end],
+                span: self.make_span(start, invalid_end, line, column),
             });
         }
 
-        let clean = text.replace('_', "");
-
         let kind = if has_dot {
-            match clean.parse::<f64>() {
-                Ok(value) if value.is_finite() => TokenKind::FloatLiteral(value),
+            match parse_decimal_float(raw) {
+                Some(value) if value.is_finite() => TokenKind::FloatLiteral(value),
                 _ => {
                     return Err(LexError::InvalidNumber {
-                        lexeme: text,
-                        span: self.make_span(start, self.offset(), line, column),
+                        lexeme: raw,
+                        span: self.make_span(start, end, line, column),
                     })
                 }
             }
         } else {
-            match clean.parse::<i64>() {
-                Ok(value) => TokenKind::IntLiteral(value),
-                Err(_) => {
+            match parse_decimal_i64(raw) {
+                Some(value) => TokenKind::IntLiteral(value),
+                None => {
                     return Err(LexError::InvalidNumber {
-                        lexeme: text,
-                        span: self.make_span(start, self.offset(), line, column),
+                        lexeme: raw,
+                        span: self.make_span(start, end, line, column),
                     })
                 }
             }
         };
 
-        Ok(self.token_from_source(
-            kind,
-            start,
-            self.offset(),
-            line,
-            column,
-        ))
+        Ok(self.token_from_source(kind, start, end, line, column))
     }
 
     fn lex_string(
@@ -393,9 +377,9 @@ impl<'a> Lexer<'a> {
         start: usize,
         line: usize,
         column: usize,
-    ) -> Result<Token, LexError> {
+    ) -> Result<Token<'a>, LexError<'a>> {
         self.bump(); // opening quote
-        let mut value = String::new();
+        let content_start = self.offset();
 
         loop {
             match self.peek() {
@@ -405,61 +389,45 @@ impl<'a> Lexer<'a> {
                     })
                 }
                 Some('"') => {
+                    let content_end = self.offset();
                     self.bump();
-                    break;
+
+                    let raw = &self.input[content_start..content_end];
+                    return Ok(self.token_from_source(
+                        TokenKind::StringLiteral { raw },
+                        start,
+                        self.offset(),
+                        line,
+                        column,
+                    ));
                 }
                 Some('\\') => {
                     let escape_start = self.offset();
                     self.bump();
 
-                    let escaped = match self.peek() {
-                        Some('n') => '\n',
-                        Some('r') => '\r',
-                        Some('t') => '\t',
-                        Some('0') => '\0',
-                        Some('\\') => '\\',
-                        Some('"') => '"',
-                        Some('/') => '/',
+                    match self.peek() {
+                        Some('n' | 'r' | 't' | '0' | '\\' | '"' | '/') => {
+                            self.bump();
+                        }
                         Some(other) => {
+                            let end = self.offset() + other.len_utf8();
                             return Err(LexError::InvalidEscape {
-                                escape: format!("\\{other}"),
-                                span: self.make_span(
-                                    escape_start,
-                                    self.offset() + other.len_utf8(),
-                                    line,
-                                    column,
-                                ),
-                            })
+                                escape: &self.input[escape_start..end],
+                                span: self.make_span(escape_start, end, line, column),
+                            });
                         }
                         None => {
                             return Err(LexError::UnterminatedString {
-                                span: self.make_span(
-                                    start,
-                                    self.input.len(),
-                                    line,
-                                    column,
-                                ),
+                                span: self.make_span(start, self.input.len(), line, column),
                             })
                         }
-                    };
-
-                    self.bump();
-                    value.push(escaped);
+                    }
                 }
-                Some(c) => {
-                    value.push(c);
+                Some(_) => {
                     self.bump();
                 }
             }
         }
-
-        Ok(self.token_from_source(
-            TokenKind::StringLiteral(value),
-            start,
-            self.offset(),
-            line,
-            column,
-        ))
     }
 
     fn peek(&self) -> Option<char> {
@@ -518,6 +486,53 @@ fn is_ident_continue(c: char) -> bool {
     is_xid_continue(c)
 }
 
+
+fn parse_decimal_i64(raw: &str) -> Option<i64> {
+    let mut value = 0i64;
+    let mut digits = 0usize;
+
+    for byte in raw.bytes() {
+        if byte == b'_' {
+            continue;
+        }
+
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+
+        digits += 1;
+        value = value.checked_mul(10)?.checked_add(i64::from(byte - b'0'))?;
+    }
+
+    (digits > 0).then_some(value)
+}
+
+fn parse_decimal_float(raw: &str) -> Option<f64> {
+    let mut value = 0.0f64;
+    let mut scale = 1.0f64;
+    let mut after_dot = false;
+    let mut digits = 0usize;
+
+    for byte in raw.bytes() {
+        match byte {
+            b'_' => {}
+            b'.' if !after_dot => after_dot = true,
+            b'0'..=b'9' => {
+                digits += 1;
+                let digit = f64::from(byte - b'0');
+                if after_dot {
+                    scale *= 0.1;
+                    value += digit * scale;
+                } else {
+                    value = value.mul_add(10.0, digit);
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    (digits > 0 && value.is_finite()).then_some(value)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,7 +598,7 @@ mod tests {
                 TokenKind::Identifier("other".into()),
                 TokenKind::FloatLiteral("3.14".parse::<f64>().unwrap()),
                 TokenKind::Identifier("text".into()),
-                TokenKind::StringLiteral("hello\nworld".into()),
+                TokenKind::StringLiteral { raw: "hello\\nworld" },
                 TokenKind::BoolLiteral(true),
                 TokenKind::BoolLiteral(false),
                 TokenKind::RBrace,
