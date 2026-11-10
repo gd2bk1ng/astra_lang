@@ -1,10 +1,10 @@
 # SyntraLang Cognitive Syntax Staging
 
-Status: **syntax staging specification — not yet implemented**
+Status: **borrowed cognitive AST substrate implemented — parser integration staged**
 
-This document defines the first cognitive-syntax extension points that will sit on
-top of the hardened ordinary syntax substrate. It does not claim that the
-semantic model, verifier, runtime, or governance system exists yet.
+This document defines the first cognitive-syntax extension points that sit on top of
+the hardened ordinary syntax substrate. It does not claim that the semantic model,
+verifier, runtime, or governance system exists yet.
 
 ## 1. Design boundary
 
@@ -47,8 +47,8 @@ IntentField ::= "motive" StringLiteral
               | Identifier Block
 ~~~
 
-This preserves the existing parser foundation while reserving explicit
-structural forms for the cognitive layer.
+The borrowed AST now reserves dedicated variants for the four cognitive blocks
+while retaining the existing generic string/block forms for ordinary intent fields.
 
 ## 3. Goal
 
@@ -63,13 +63,13 @@ GoalMember ::= "description" StringLiteral
              | "target" Expression
 ~~~
 
-The parser's responsibility is structural validity and source provenance.
+The borrowed AST substrate now provides `Goal<'src>` and `GoalMember<'src>`.
 Priority, condition, and target semantics belong to later verification.
 
 ## 4. Effects
 
 Effects declare the capabilities or side-effect classes associated with a
-construct.
+cognitive construct.
 
 ~~~ebnf
 EffectsBlock ::= "effects" "{" EffectItem { "," EffectItem } "}"
@@ -80,8 +80,8 @@ EffectItem ::= Identifier
              | "SelfModify"
 ~~~
 
-This is compatible with the existing effect vocabulary in the active grammar
-draft. The parser should preserve each effect name as borrowed source text.
+The AST provides borrowed `Effects<'src>` and `EffectItem<'src>` nodes.
+Semantic effect checking remains a later phase.
 
 ## 5. Uncertainty
 
@@ -96,8 +96,8 @@ UncertaintyMember ::= "confidence" Expression
                     | "source" StringLiteral
 ~~~
 
-Numerical meaning, calibration, evidence quality, and epistemic rules belong to
-the semantic layer.
+The AST provides dedicated borrowed uncertainty members. Numerical meaning,
+calibration, evidence quality, and epistemic rules belong to the semantic layer.
 
 ## 6. Governance
 
@@ -111,15 +111,13 @@ GovernanceMember ::= "requires" Identifier
                    | "constraint" Expression
 ~~~
 
-The parser must never interpret an `approval` field as proof that approval was
-actually granted. Verification and runtime policy must establish that boundary.
+The AST provides dedicated governance members. The parser must never interpret
+an `approval` field as proof that approval was actually granted. Verification
+and runtime policy must establish that boundary.
 
-## 7. Staged AST boundary
+## 7. Borrowed AST boundary
 
-The first implementation should extend the borrowed AST rather than introduce
-an owned cognitive tree.
-
-The intended shape is conceptually:
+The implemented substrate is conceptually:
 
 ~~~text
 Program<'src>
@@ -133,7 +131,8 @@ Program<'src>
 ~~~
 
 All source-bearing names, strings, and expressions continue to borrow from the
-original source buffer.
+original source buffer. Structural containers such as `Vec` and `Box` remain
+owned because they represent tree topology rather than duplicated source text.
 
 ## 8. Implementation gate
 
@@ -149,7 +148,8 @@ satisfy:
 7. grammar conformance fixtures are established;
 8. CI verifies the implementation.
 
-Only after these gates should cognitive AST nodes be added.
+The cognitive AST milestone establishes the source-borrowing data model. Parser
+recognition and fixture coverage remain the next implementation step.
 
 ## 9. Semantic separation
 
