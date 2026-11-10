@@ -79,6 +79,27 @@ The active development branch is:
 
 \`syntra_lang\`
 
+## Semantic Verification Milestone
+
+The borrowed AST now has an initial semantic verification layer exposed as `syntra_lang::SemanticVerifier`.
+
+Implemented foundations:
+- borrowed `Program<'src>` traversal
+- epistemic confidence bounds and deterministic-gate checks
+- explicit semantic types for probabilistic values and capabilities
+- affine capability ledger foundation
+- effect/capability checks for known side-effect operations
+- governance numeric contradiction detection
+- source-aware semantic diagnostics through `DiagnosticEngine`
+- semantic conformance fixtures for epistemic resolution, capability leakage, self-modification, governance contradiction, and confidence bounds
+
+Important staging boundary:
+- the current AST does not yet encode probabilistic variable declarations or function-local effect/capability clauses
+- therefore this verifier implements only the semantic rules expressible by the current syntax
+- unrestricted self-modification, authorization proof, and runtime capability enforcement remain outside this milestone
+
+Semantic verification is intentionally separate from parsing: parser provenance remains authoritative for source structure, while the verifier determines whether that structure is semantically admissible.
+
 ## Roadmap
 
 ### Phase 1 — Lexical contract
