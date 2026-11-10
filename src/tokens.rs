@@ -42,7 +42,7 @@ impl Span {
 /// String literals intentionally preserve their raw source contents rather
 /// than allocating a decoded String. Escape decoding belongs to a later
 /// semantic/value layer.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum TokenKind<'a> {
     Identifier(&'a str),
     IntLiteral(i64),
@@ -90,7 +90,7 @@ pub enum TokenKind<'a> {
 /// cannot outlive that source buffer, and it never owns a copy of its lexeme.
 /// This is the ownership boundary the parser and future AST<'a> will build
 /// upon.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Token<'a> {
     pub kind: TokenKind<'a>,
     pub span: Span,
