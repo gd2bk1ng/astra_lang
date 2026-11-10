@@ -1,145 +1,50 @@
-// =============================================================================
-// Astra Reference Compiler (ARC)
-// File: ast.rs
-//
-// Description:
-//     Abstract Syntax Tree (AST) definitions for the Astra language.
-//     Represents parsed source code constructs in a structured, typed form.
-//
-//     AST is syntax-agnostic but includes optional type annotations for later phases.
-//
-// Intent:
-//     - Optimize for clarity and maintainability.
-//     - Provide a foundation for safe, verifiable compilation and analysis.
-//     - Support temporal reasoning and intent-driven constructs.
-//
-// Author: Alex Roussinov
-// Created: 2025-12-22
-// =============================================================================
+use crate::tokens::Span;
 
-use crate::types::Type;
+/// Borrowed syntax tree. Source-bearing fields borrow from the original input.
+#[derive(Debug, PartialEq)]
+pub struct Program<'a> { pub declarations: Vec<Declaration<'a>>, pub span: Span }
 
-/// Top-level AST node representing a program item.
-#[derive(Debug, Clone)]
-pub enum AstNode {
-    Function(FunctionDecl),
-    Intent(IntentDecl),
-    Rule(RuleDecl),
-    // Extend as needed for other top-level constructs
-}
+#[derive(Debug, PartialEq)]
+pub enum Declaration<'a> { Function(Function<'a>), Intent(Intent<'a>), Rule(Rule<'a>) }
 
-/// Function declaration node.
-#[derive(Debug, Clone)]
-pub struct FunctionDecl {
-    /// Optional differentiable function marker (`@grad`)
-    pub is_grad: bool,
-    /// Function name
-    pub name: String,
-    /// Parameters with optional type annotations
-    pub params: Vec<Param>,
-    /// Optional return type annotation
-    pub ret_type: Option<Type>,
-    /// Effects declared on the function (e.g., IO, SelfModify)
-    pub effects: Vec<String>,
-    /// Function body block
-    pub body: Block,
-}
+#[derive(Debug, PartialEq)]
+pub struct Function<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span, pub grad: bool }
 
-/// Intent declaration node (Astra intent layer).
-#[derive(Debug, Clone)]
-pub struct IntentDecl {
-    /// Intent name
-    pub name: String,
-    /// Optional motive description
-    pub motive: Option<String>,
-    /// Optional action description
-    pub action: Option<String>,
-    // Extend with additional intent fields as needed
-}
+#[derive(Debug, PartialEq)]
+pub struct Intent<'a> { pub name: &'a str, pub members: Vec<IntentMember<'a>>, pub span: Span }
 
-/// Rule declaration node (logic programming).
-#[derive(Debug, Clone)]
-pub struct RuleDecl {
-    /// Rule name
-    pub name: String,
-    /// Parameters with optional type annotations
-    pub params: Vec<Param>,
-    /// Optional return type annotation
-    pub ret_type: Option<Type>,
-    /// Rule body block
-    pub body: Block,
-}
+#[derive(Debug, PartialEq)]
+pub struct IntentMember<'a> { pub name: &'a str, pub value: IntentValue<'a>, pub span: Span }
 
-/// Function or rule parameter.
-#[derive(Debug, Clone)]
-pub struct Param {
-    /// Parameter name
-    pub name: String,
-    /// Optional type annotation
-    pub ty: Option<Type>,
-}
+#[derive(Debug, PartialEq)]
+pub enum IntentValue<'a> { String(&'a str), Block(Block<'a>) }
 
-/// Block of statements.
-#[derive(Debug, Clone)]
-pub struct Block {
-    /// List of statements in the block
-    pub statements: Vec<Statement>,
-}
+#[derive(Debug, PartialEq)]
+pub struct Rule<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span }
 
-/// Statements within blocks.
-#[derive(Debug, Clone)]
-pub enum Statement {
-    /// Expression statement
-    Expr(Expression),
-    /// Let binding with optional initializer
-    LetBinding { name: String, expr: Option<Expression> },
-    /// Return statement
-    Return(Expression),
-    /// Backtracking block for symbolic search
-    Backtrack(Block),
-    // Extend with other statement types as needed
-}
+#[derive(Debug, PartialEq)]
+pub struct Parameter<'a> { pub name: &'a str, pub ty: TypeRef<'a>, pub span: Span }
 
-/// Expressions.
-#[derive(Debug, Clone)]
-pub enum Expression {
-    Identifier(String),
-    IntLiteral(i64),
-    FloatLiteral(f64),
-    StringLiteral(String),
-    BoolLiteral(bool),
+#[derive(Debug, PartialEq)]
+pub struct TypeRef<'a> { pub name: &'a str, pub arguments: Vec<TypeRef<'a>>, pub span: Span }
 
-    /// Function call: callee(args...)
-    FunctionCall { callee: Box<Expression>, args: Vec<Expression> },
+#[derive(Debug, PartialEq)]
+pub struct Block<'a> { pub statements: Vec<Statement<'a>>, pub span: Span }
 
-    /// Code block expression
-    Block(Block),
+#[derive(Debug, PartialEq)]
+pub enum Statement<'a> { Let { name: &'a str, value: Option<Expression<'a>>, span: Span }, Return { value: Expression<'a>, span: Span }, Expression { expression: Expression<'a>, span: Span }, Backtrack { body: Block<'a>, span: Span }, Annotation(Annotation<'a>) }
 
-    /// Pattern matching expression: match expr { arms }
-    Match { expr: Box<Expression>, arms: Vec<MatchArm> },
+#[derive(Debug, PartialEq)]
+pub struct Annotation<'a> { pub name: &'a str, pub arguments: Vec<Expression<'a>>, pub span: Span }
 
-    /// Symbolic expression (logic variable or constraint)
-    Symbolic(String),
+#[derive(Debug, PartialEq)]
+pub enum Expression<'a> { Identifier(&'a str, Span), Literal(Literal<'a>, Span), Call { callee: Box<Expression<'a>>, arguments: Vec<Expression<'a>>, span: Span }, Unary { operator: UnaryOp, operand: Box<Expression<'a>>, span: Span }, Binary { left: Box<Expression<'a>>, operator: BinaryOp, right: Box<Expression<'a>>, span: Span }, Block(Block<'a>), Symbolic { identifier: &'a str, span: Span }, SelfModify { target: &'a str, patch: Box<Expression<'a>>, span: Span } }
 
-    /// Self-modification expression: modify(target, patch)
-    SelfModify { target: String, patch: Box<Expression> },
+#[derive(Debug, PartialEq)]
+pub enum Literal<'a> { Integer(i64), Float(f64), String(&'a str), Boolean(bool) }
 
-    // Extend with unary, binary, lambda, etc., as needed
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp { Negate, Not }
 
-/// Match arm: pattern => expression;
-#[derive(Debug, Clone)]
-pub struct MatchArm {
-    pub pattern: Pattern,
-    pub expr: Expression,
-}
-
-/// Patterns for match expressions.
-#[derive(Debug, Clone)]
-pub enum Pattern {
-    Identifier(String),
-    Wildcard,
-    Literal(Expression),
-    Tuple(Vec<Pattern>),
-    Constructor { name: String, args: Vec<Pattern> },
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp { Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, And, Or }
