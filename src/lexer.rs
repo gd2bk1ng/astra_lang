@@ -577,7 +577,7 @@ mod tests {
                 TokenKind::Identifier("value".into()),
                 TokenKind::IntLiteral(42),
                 TokenKind::Identifier("other".into()),
-                TokenKind::FloatLiteral(3.14),
+                TokenKind::FloatLiteral("3.14".parse::<f64>().unwrap()),
                 TokenKind::Identifier("text".into()),
                 TokenKind::StringLiteral("hello\nworld".into()),
                 TokenKind::BoolLiteral(true),
@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(tokens[0].kind, TokenKind::Minus);
         assert_eq!(tokens[1].kind, TokenKind::IntLiteral(42));
         assert_eq!(tokens[2].kind, TokenKind::Minus);
-        assert_eq!(tokens[3].kind, TokenKind::FloatLiteral(3.14));
+        assert_eq!(tokens[3].kind, TokenKind::FloatLiteral("3.14".parse::<f64>().unwrap()));
     }
 
     #[test]
