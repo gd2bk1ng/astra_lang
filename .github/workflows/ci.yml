@@ -1,39 +1,37 @@
-name: CI
+name: SyntraLang CI
 
 on:
   push:
-    branches: [ main ]
+    branches: ["syntra_lang"]
   pull_request:
-    branches: [ main ]
+    branches: ["syntra_lang"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  build:
+  check:
+    name: Check, test, fmt, clippy
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
+          components: rustfmt, clippy
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-      - name: Cache Cargo build
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cargo check
+        run: cargo check --all-targets
 
-      - name: Build Astra
-        run: cargo build --verbose
+      - name: Tests
+        run: cargo test --all-targets
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
