@@ -1,0 +1,115 @@
+# SyntraLang Formal Grammar
+
+This file is the active SyntraLang grammar draft. It preserves the historical
+language concepts while making the lexical contract explicit.
+
+Program ::= { TopLevelDecl }
+
+TopLevelDecl ::= FunctionDecl
+              | IntentDecl
+              | RuleDecl
+              | ImportDecl
+              | Annotation
+              | Statement
+
+FunctionDecl ::= [GradAnnotation] "fn" Identifier "(" [ParamList] ")" ["->" Type] Block
+GradAnnotation ::= "@" "grad"
+
+ParamList ::= Param { "," Param }
+Param ::= Identifier ":" Type
+
+IntentDecl ::= "intent" Identifier "{" { IntentField } "}"
+IntentField ::= "motive" StringLiteral
+              | "action" StringLiteral
+              | Identifier StringLiteral
+              | Identifier Block
+
+RuleDecl ::= "rule" Identifier "(" [ParamList] ")" ["->" Type] Block
+
+Block ::= "{" { Statement } "}"
+Statement ::= Expression ";"
+            | LetBinding
+            | MatchExpr
+            | BacktrackBlock
+            | Annotation
+            | ReturnStmt
+
+LetBinding ::= "let" Identifier ["=" Expression] ";"
+ReturnStmt ::= "return" Expression ";"
+BacktrackBlock ::= "backtrack" Block
+
+Annotation ::= "::" Identifier [ "(" [AnnotationArgs] ")" ]
+AnnotationArgs ::= Expression { "," Expression }
+
+Expression ::= Literal
+             | Identifier
+             | FunctionCall
+             | LambdaExpr
+             | MatchExpr
+             | BinaryExpr
+             | UnaryExpr
+             | Block
+             | SymbolicExpr
+             | SelfModifyExpr
+
+Literal ::= IntLiteral | FloatLiteral | StringLiteral | BoolLiteral
+
+FunctionCall ::= Expression "(" [ArgList] ")"
+ArgList ::= Expression { "," Expression }
+
+LambdaExpr ::= "fn" "(" [ParamList] ")" Block
+
+MatchExpr ::= "match" Expression "{" { MatchArm } "}"
+MatchArm ::= Pattern "=>" Expression ";"
+
+Pattern ::= Identifier
+          | Literal
+          | "_"
+          | "(" [Pattern { "," Pattern }] ")"
+          | Identifier [Pattern | "(" [Pattern { "," Pattern }] ")"]
+
+BinaryExpr ::= Expression BinaryOp Expression
+BinaryOp ::= "+" | "-" | "*" | "/" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||"
+
+UnaryExpr ::= UnaryOp Expression
+UnaryOp ::= "-" | "!"
+
+SymbolicExpr ::= "symbolic" "(" Identifier ")"
+SelfModifyExpr ::= "modify" "(" Identifier "," Expression ")"
+
+Type ::= BaseType
+       | TypeVar
+       | Type "->" EffectAnnotation Type
+       | "Mut" "<" Type ">"
+       | "Ref" "<" Type ">"
+       | "Cap" "<" Type ">"
+       | "Tensor" "<" Shape "," DType ">"
+       | "Symbolic" "<" Prop ">"
+       | "Grad" "<" Type ">"
+       | "DepType" "<" Identifier ":" Type "|" Prop ">"
+       | "Unit"
+       | "Bool"
+       | "Int" "<" Number ">"
+       | "Float" "<" Number ">"
+       | "String"
+
+EffectAnnotation ::= "{" EffectList "}"
+EffectList ::= Effect { "," Effect }
+Effect ::= "Pure" | "IO" | "Network" | "SelfModify" | Identifier
+
+Shape ::= "[" [Number | Identifier] { "," [Number | Identifier] } "]"
+DType ::= "f32" | "f64" | "i32" | "i64" | "bool" | "string"
+Prop ::= Expression
+
+# Lexical contract
+
+Identifier   ::= /Unicode alphabetic or '_' followed by Unicode alphanumeric or '_'+/
+IntLiteral   ::= /[0-9]+ with optional '_' separators/
+FloatLiteral ::= /[0-9]+ '.' [0-9]+ with optional '_' separators/
+               | '.' [0-9]+ with optional '_' separators/
+StringLiteral ::= '"' characters with backslash escapes '"'
+BoolLiteral  ::= "true" | "false"
+
+Whitespace and comments are skipped:
+- line comment: // ...
+- block comment: /* ... */
