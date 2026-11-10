@@ -19,7 +19,7 @@ It provides:
 - line and block comments
 - stable byte offsets with line/column positions
 - exact raw lexeme preservation
-- decoded literal values
+- scalar numeric values with raw source spelling; string contents remain borrowed and undecoded
 - deterministic lexical diagnostics
 - malformed-input rejection
 - no silent character loss
@@ -91,14 +91,9 @@ The active development branch is:
 - CI verification
 
 ### Phase 2 — Syntax
-- borrowed-token architecture
+- borrowed-token architecture — implemented
 - Syntra parser
 - cognitive primitive parser specification
-- unified AST
-- grammar conformance tests
-
-### Phase 2 — Syntax
-- Syntra parser
 - unified AST
 - grammar conformance tests
 
