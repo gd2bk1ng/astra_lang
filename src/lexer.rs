@@ -198,14 +198,14 @@ impl<'a> Lexer<'a> {
         line: usize,
         column: usize,
     ) -> Token<'a> {
-        Token::with_lexeme(
+        Token::new(
             kind,
             self.make_span(start, end, line, column),
             &self.input[start..end],
         )
     }
 
-    fn skip_space_and_comments(&mut self) -> Result<(), LexError> {
+    fn skip_space_and_comments(&mut self) -> Result<(), LexError<'a>> {
         loop {
             while self.peek().is_some_and(char::is_whitespace) {
                 self.bump();
@@ -261,7 +261,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_identifier(&mut self, start: usize, line: usize, column: usize) -> Token {
+    fn lex_identifier(&mut self, start: usize, line: usize, column: usize) -> Token<'a> {
         while let Some(c) = self.peek() {
             if is_ident_continue(c) {
                 self.bump();
@@ -277,7 +277,7 @@ impl<'a> Lexer<'a> {
             "true" => TokenKind::BoolLiteral(true),
             "false" => TokenKind::BoolLiteral(false),
             "_" => TokenKind::Underscore,
-            _ => TokenKind::Identifier(raw.to_owned()),
+            _ => TokenKind::Identifier(raw),
         };
 
         Token::new(
