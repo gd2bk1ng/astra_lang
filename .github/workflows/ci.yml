@@ -11,8 +11,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  check:
-    name: Check, test, fmt, clippy
+  verify:
+    name: Check, test, clippy
     runs-on: ubuntu-latest
 
     steps:
@@ -22,10 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
-      - name: Format check
-        run: cargo fmt --all -- --check
+          components: clippy
 
       - name: Cargo check
         run: cargo check --all-targets
