@@ -198,11 +198,18 @@ impl<'src> SemanticVerifier<'src> {
             }
         }
 
+        // Establish epistemic facts before checking consumers, regardless of
+        // declaration order inside the intent.
+        for member in &intent.members {
+            if let IntentValue::Uncertainty(uncertainty) = &member.value {
+                self.verify_uncertainty(uncertainty);
+            }
+        }
+
         for member in &intent.members {
             match &member.value {
                 IntentValue::Goal(goal) => self.verify_goal(goal),
-                IntentValue::Effects(_) => {}
-                IntentValue::Uncertainty(uncertainty) => self.verify_uncertainty(uncertainty),
+                IntentValue::Effects(_) | IntentValue::Uncertainty(_) => {}
                 IntentValue::Governance(governance) => self.verify_governance(governance),
                 IntentValue::String(_) | IntentValue::Block(_) => {}
             }
@@ -346,7 +353,13 @@ impl<'src> SemanticVerifier<'src> {
 
     fn infer_expression(&mut self, expression: &Expression<'src>) -> EpistemicState {
         match expression {
-            Expression::Identifier(_, _) => EpistemicState::Unknown,
+            Expression::Identifier(_, _) => match self.epistemic_confidence {
+                Some(confidence) if confidence < 1.0 => {
+                    EpistemicState::Probabilistic { confidence }
+                }
+                Some(_) => EpistemicState::Deterministic,
+                None => EpistemicState::Unknown,
+            },
             Expression::Literal(_, _) => EpistemicState::Deterministic,
             Expression::Call {
                 callee,
