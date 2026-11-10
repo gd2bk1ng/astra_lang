@@ -104,12 +104,22 @@ Prop ::= Expression
 # Lexical contract
 
 Identifier   ::= /XID_Start or '_' followed by zero or more XID_Continue characters/
-IntLiteral   ::= /[0-9]+ with optional '_' separators/
-FloatLiteral ::= /[0-9]+ '.' [0-9]+ with optional '_' separators/
-               | '.' [0-9]+ with optional '_' separators/
+IntLiteral   ::= /decimal digits with '_' allowed only between digits/
+FloatLiteral ::= /decimal digits with '_' allowed only between digits/
+               | '.' [0-9]+ with '_' allowed only between digits/
 StringLiteral ::= '"' characters with backslash escapes '"'
 BoolLiteral  ::= "true" | "false"
 
 Whitespace and comments are skipped:
 - line comment: // ...
 - block comment: /* ... */
+
+# Numeric lexical policy
+
+- SyntraLang currently defines decimal integers and decimal floating-point literals only.
+- Numeric separators are permitted only between digits; leading, trailing, and repeated
+  separators are invalid.
+- A decimal point in a floating-point literal must have at least one digit on both sides
+  when the literal begins with digits. Therefore `1.` is invalid while `1.0` is valid.
+- Exponent notation and alternate numeric bases are intentionally unspecified for this
+  milestone and must be added through an explicit language-contract change.
