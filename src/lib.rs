@@ -4,6 +4,7 @@
 //! from the compiler, runtime, AI tooling, and Syntra Kernel layers.
 
 pub mod ast;
+pub mod diagnostics;
 pub mod lexer;
 pub mod parser;
 pub mod tokens;
@@ -14,5 +15,6 @@ pub mod tokens;
 
 pub use ast::*;
 pub use lexer::{LexError, Lexer};
-pub use parser::{ParseError, Parser, TokenCursor};
+pub use diagnostics::{Diagnostic, DiagnosticEngine, DiagnosticSeverity};
+pub use parser::{ParseError, ParseReport, Parser, TokenCursor};
 pub use tokens::{Span, Token, TokenKind};
