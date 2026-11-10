@@ -235,3 +235,55 @@ Before expanding the cognitive grammar, the parser should receive:
 8. parser fuzz/property testing;
 9. AST invariants and versioning policy.
 
+
+
+## 16. Parser hardening boundary
+
+The parser now exposes a fail-fast path and a recovery path.
+
+`parse_program()` preserves the original compiler-style contract: the first
+syntax error is returned immediately.
+
+`parse_program_recovering()` instead returns a `ParseReport` containing the
+partial borrowed program plus every error encountered after synchronization.
+Recovery boundaries are deliberately conservative:
+
+- `;` ends a malformed statement;
+- `}` ends a malformed block/declaration region;
+- `EOF` terminates recovery without attempting fabricated tokens.
+
+Every recovery loop consumes at least one token unless it has reached EOF. This
+is an explicit no-progress invariant.
+
+## 17. Source-aware diagnostics
+
+`DiagnosticEngine` converts parser errors into diagnostics that retain the
+original `&'src str` and the exact `Span`.
+
+A diagnostic exposes:
+
+- stable diagnostic code;
+- severity;
+- human-readable message;
+- line and column;
+- byte range;
+- source-line context;
+- rendered caret span.
+
+The byte range remains the canonical machine-facing location. Line/column
+remain presentation coordinates derived from the same lexical span.
+
+## 18. Verification gate
+
+The parser-hardening milestone now has dedicated fixtures for:
+
+- binary precedence;
+- nested block structure;
+- malformed control flow;
+- semicolon recovery;
+- closing-brace recovery;
+- exact diagnostic source spans.
+
+The next gate is CI verification of these fixtures and formatting, followed by
+grammar-conformance expansion. Cognitive AST implementation remains blocked on
+that verification gate.
