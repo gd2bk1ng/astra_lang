@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Byte offsets and human-readable source position for a token.
+///
+/// Offsets are always measured in the original UTF-8 source buffer. A borrowed
+/// token therefore never needs to duplicate source text to retain provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start: usize,
@@ -29,12 +33,21 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TokenKind {
-    Identifier(String),
+/// Lexical token kind.
+///
+/// The token kind borrows source text for constructs whose spelling is
+/// semantically relevant. Numeric values remain immediate scalar values; their
+/// exact source spelling is retained by Token::lexeme.
+///
+/// String literals intentionally preserve their raw source contents rather
+/// than allocating a decoded String. Escape decoding belongs to a later
+/// semantic/value layer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TokenKind<'a> {
+    Identifier(&'a str),
     IntLiteral(i64),
     FloatLiteral(f64),
-    StringLiteral(String),
+    StringLiteral { raw: &'a str },
     BoolLiteral(bool),
 
     LBrace,
@@ -69,38 +82,30 @@ pub enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Token {
-    pub kind: TokenKind,
+/// A zero-copy lexical token borrowing directly from the input source.
+///
+/// # Lifetime contract
+///
+/// 'a is the lifetime of the source buffer supplied to the lexer. The token
+/// cannot outlive that source buffer, and it never owns a copy of its lexeme.
+/// This is the ownership boundary the parser and future AST<'a> will build
+/// upon.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Token<'a> {
+    pub kind: TokenKind<'a>,
     pub span: Span,
 
-    /// Exact source slice for this token.
-    ///
-    /// Literal token kinds may contain a normalized/decoded value while this
-    /// field preserves the original spelling for diagnostics, tooling, and
-    /// source-aware AI systems.
-    pub lexeme: String,
+    /// Exact source spelling for this token.
+    pub lexeme: &'a str,
 }
 
-impl Token {
-    pub fn new(kind: TokenKind, span: Span) -> Self {
-        Self {
-            kind,
-            span,
-            lexeme: String::new(),
-        }
-    }
-
-    pub fn with_lexeme(kind: TokenKind, span: Span, lexeme: impl Into<String>) -> Self {
-        Self {
-            kind,
-            span,
-            lexeme: lexeme.into(),
-        }
+impl<'a> Token<'a> {
+    pub fn new(kind: TokenKind<'a>, span: Span, lexeme: &'a str) -> Self {
+        Self { kind, span, lexeme }
     }
 }
 
-impl fmt::Display for TokenKind {
+impl fmt::Display for TokenKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use TokenKind::*;
 
@@ -108,7 +113,7 @@ impl fmt::Display for TokenKind {
             Identifier(v) => write!(f, "identifier({v})"),
             IntLiteral(v) => write!(f, "integer({v})"),
             FloatLiteral(v) => write!(f, "float({v})"),
-            StringLiteral(_) => write!(f, "string"),
+            StringLiteral { .. } => write!(f, "string"),
             BoolLiteral(v) => write!(f, "boolean({v})"),
             LBrace => write!(f, "{{"),
             RBrace => write!(f, "}}"),
