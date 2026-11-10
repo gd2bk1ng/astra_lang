@@ -371,18 +371,39 @@ impl<'src> SemanticVerifier<'src> {
                     _ => None,
                 };
 
+                let mut argument_state = None;
                 for argument in arguments {
-                    let _ = self.infer_expression(argument);
+                    let state = self.infer_expression(argument);
+                    argument_state = Some(match argument_state {
+                        Some(previous) => combine_epistemic(previous, state),
+                        None => state,
+                    });
                 }
 
                 if let Some(name) = callee_name {
                     self.verify_effect_for_operation(name, *span);
-                    if is_resolution_operation(name) || is_deterministic_gate(name) {
+
+                    if is_resolution_operation(name) {
+                        return EpistemicState::Deterministic;
+                    }
+
+                    if is_deterministic_gate(name) {
+                        if let Some(EpistemicState::Probabilistic { confidence }) = argument_state {
+                            if confidence < 1.0 {
+                                self.error(
+                                    CODE_EPISTEMIC_GATE,
+                                    format!(
+                                        "probabilistic argument with confidence {confidence:.3} cannot enter deterministic gate '{name}' without explicit resolution"
+                                    ),
+                                    *span,
+                                );
+                            }
+                        }
                         return EpistemicState::Deterministic;
                     }
                 }
 
-                EpistemicState::Unknown
+                argument_state.unwrap_or(EpistemicState::Unknown)
             }
             Expression::Unary { operand, .. } => self.infer_expression(operand),
             Expression::Binary { left, right, .. } => {
