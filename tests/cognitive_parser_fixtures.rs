@@ -12,50 +12,28 @@ fn parse(source: &str) -> syntra_lang::Program<'_> {
 #[test]
 fn parses_fully_qualified_cognitive_intent() {
     let source = concat!(
-        "intent mission {
-",
-        "  motive \"deliver safely\"
-",
-        "  goal deploy {
-",
-        "    description \"production release\"
-",
-        "    priority 10
-",
-        "    condition ready && score >= 0.8
-",
-        "    target deploy()
-",
-        "  }
-",
-        "  effects { Pure, Network, IO }
-",
-        "  uncertainty {
-",
-        "    confidence 0.95
-",
-        "    assumption \"staging matches production\"
-",
-        "    evidence assess(threshold(0.8))
-",
-        "    source \"telemetry\"
-",
-        "  }
-",
-        "  governance {
-",
-        "    requires operator
-",
-        "    approval reviewer
-",
-        "    policy \"production-change\"
-",
-        "    constraint risk <= threshold(0.8)
-",
-        "  }
-",
-        "}
-",
+        "intent mission {\\n",
+        "  motive \"deliver safely\"\\n",
+        "  goal deploy {\\n",
+        "    description \"production release\"\\n",
+        "    priority 10\\n",
+        "    condition ready && score >= 0.8\\n",
+        "    target deploy()\\n",
+        "  }\\n",
+        "  effects { Pure, Network, IO }\\n",
+        "  uncertainty {\\n",
+        "    confidence 0.95\\n",
+        "    assumption \"staging matches production\"\\n",
+        "    evidence assess(threshold(0.8))\\n",
+        "    source \"telemetry\"\\n",
+        "  }\\n",
+        "  governance {\\n",
+        "    requires operator\\n",
+        "    approval reviewer\\n",
+        "    policy \"production-change\"\\n",
+        "    constraint risk <= threshold(0.8)\\n",
+        "  }\\n",
+        "}\\n",
     );
 
     let program = parse(source);
@@ -135,20 +113,13 @@ fn cognitive_nodes_preserve_source_spans() {
 #[test]
 fn malformed_cognitive_syntax_recovers_without_stalling() {
     let source = concat!(
-        "intent broken {
-",
-        "  goal deploy { priority ; }
-",
-        "}
-",
-        "intent good {
-",
-        "  effects { Network }
-",
-        "  governance { requires operator }
-",
-        "}
-",
+        "intent broken {\\n",
+        "  goal deploy { priority ; }\\n",
+        "}\\n",
+        "intent good {\\n",
+        "  effects { Network }\\n",
+        "  governance { requires operator }\\n",
+        "}\\n",
     );
 
     let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
