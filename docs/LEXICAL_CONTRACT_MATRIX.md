@@ -75,17 +75,16 @@ grow without continually expanding the low-level token enum.
 
 ## 4. Zero-copy and no_std status
 
-The long-term architecture calls for source-borrowing tokens over `&'a [u8]`
-or an equivalent source buffer, with parsing performed without runtime heap
-allocation where practical.
+The current lexical implementation now uses source-borrowing tokens over `&'a str`.
+`Token<'a>` retains the exact source lexeme without owning a `String`, and
+identifier/string token payloads borrow directly from the input buffer.
+Numeric values remain scalar values while their source spelling remains
+borrowed through the token lexeme.
 
-The **current implementation does not yet satisfy that invariant**. Current
-`TokenKind` variants own `String` values and `Vec<Token>` is returned by
-the lexer. This matrix therefore records zero-copy/no_std as a target
-architecture, not an achieved property.
-
-Before changing the public token API, we should establish the exact ownership
-contract and benchmark its effect.
+`Vec<Token<'a>>` is still heap-backed, so this is **zero-copy token contents**,
+not yet a zero-allocation lexer pipeline. The current crate also remains `std`.
+A future `&'a [u8]`/`no_std` core is an optimization and portability boundary to
+be evaluated after parser and allocation contracts are proven.
 
 ## 5. SIMD and affine capability status
 
