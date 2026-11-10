@@ -42,3 +42,27 @@ fn public_lexer_rejects_unknown_characters() {
         syntra_lang::LexError::UnexpectedCharacter { ch: '$', .. }
     ));
 }
+
+
+#[test]
+fn public_numeric_contract_accepts_decimal_floats() {
+    let tokens = Lexer::new("1.0 .5")
+        .tokenize()
+        .expect("valid decimal floats should lex");
+
+    assert_eq!(tokens[0].kind, TokenKind::FloatLiteral(1.0));
+    assert_eq!(tokens[1].kind, TokenKind::FloatLiteral(0.5));
+}
+
+#[test]
+fn public_numeric_contract_rejects_malformed_decimal_floats() {
+    for source in ["1.", "1_.2", "1._2", "1__2", "1.2.3"] {
+        assert!(
+            matches!(
+                Lexer::new(source).tokenize(),
+                Err(syntra_lang::LexError::InvalidNumber { .. })
+            ),
+            "expected invalid number for {source:?}"
+        );
+    }
+}
