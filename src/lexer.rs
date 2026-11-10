@@ -660,15 +660,11 @@ mod tests {
 
     #[test]
     fn rejects_malformed_numbers() {
-        assert!(matches!(
-            Lexer::new("1__2").tokenize(),
-            Err(LexError::InvalidNumber { .. })
-        ));
-
-        assert!(matches!(
-            Lexer::new("1.2.3").tokenize(),
-            Err(LexError::InvalidNumber { .. })
-        ));
+        assert_eq!(kinds("1.0 .5"), vec![
+            TokenKind::FloatLiteral(1.0),
+            TokenKind::FloatLiteral(0.5),
+            TokenKind::Eof,
+        ]);
 
         assert!(matches!(
             Lexer::new("1.").tokenize(),
@@ -682,6 +678,16 @@ mod tests {
 
         assert!(matches!(
             Lexer::new("1._2").tokenize(),
+            Err(LexError::InvalidNumber { .. })
+        ));
+
+        assert!(matches!(
+            Lexer::new("1__2").tokenize(),
+            Err(LexError::InvalidNumber { .. })
+        ));
+
+        assert!(matches!(
+            Lexer::new("1.2.3").tokenize(),
             Err(LexError::InvalidNumber { .. })
         ));
     }
