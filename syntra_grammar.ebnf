@@ -18,11 +18,42 @@ GradAnnotation ::= "@" "grad"
 ParamList ::= Param { "," Param }
 Param ::= Identifier ":" Type
 
-IntentDecl ::= "intent" Identifier "{" { IntentField } "}"
+IntentDecl ::= "intent" Identifier "{" { IntentMember } "}"
+IntentMember ::= IntentField
+               | GoalBlock
+               | EffectsBlock
+               | UncertaintyBlock
+               | GovernanceBlock
+
 IntentField ::= "motive" StringLiteral
               | "action" StringLiteral
               | Identifier StringLiteral
               | Identifier Block
+
+GoalBlock ::= "goal" Identifier "{" { GoalMember } "}"
+GoalMember ::= "description" StringLiteral
+             | "priority" Expression
+             | "condition" Expression
+             | "target" Expression
+
+EffectsBlock ::= "effects" "{" EffectItem { "," EffectItem } "}"
+EffectItem ::= Identifier
+             | "Pure"
+             | "IO"
+             | "Network"
+             | "SelfModify"
+
+UncertaintyBlock ::= "uncertainty" "{" { UncertaintyMember } "}"
+UncertaintyMember ::= "confidence" Expression
+                    | "assumption" StringLiteral
+                    | "evidence" Expression
+                    | "source" StringLiteral
+
+GovernanceBlock ::= "governance" "{" { GovernanceMember } "}"
+GovernanceMember ::= "requires" Identifier
+                   | "approval" Identifier
+                   | "policy" StringLiteral
+                   | "constraint" Expression
 
 RuleDecl ::= "rule" Identifier "(" [ParamList] ")" ["->" Type] Block
 
