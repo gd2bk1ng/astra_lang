@@ -11,24 +11,24 @@ fn span(start: usize, end: usize) -> Span {
 #[test]
 fn cognitive_ast_preserves_borrowed_source_fields() {
     let source = "intent plan { goal deliver { description \"ship\" } }";
-    let goal_name = &source[13..20];
-    let description = &source[35..41];
+    let goal_name = &source[19..25];
+    let description = &source[41..47];
 
     let goal = Goal {
         name: goal_name,
         members: vec![GoalMember::Description {
             value: description,
-            span: span(33, 41),
+            span: span(29, 47),
         }],
-        span: span(21, 43),
+        span: span(14, 49),
     };
 
     let intent = Intent {
         name: &source[7..11],
         members: vec![IntentMember {
-            name: &source[13..17],
+            name: &source[14..18],
             value: IntentValue::Goal(goal),
-            span: span(13, 43),
+            span: span(14, 49),
         }],
         span: span(0, source.len()),
     };
@@ -45,7 +45,7 @@ fn cognitive_ast_preserves_borrowed_source_fields() {
     let GoalMember::Description { value, .. } = &goal.members[0] else {
         panic!("expected description");
     };
-    assert_eq!(*value, "ship");
+    assert_eq!(*value, "\"ship\"");
 }
 
 #[test]
