@@ -37,6 +37,31 @@ fn valid_epistemic_resolution_and_declared_effects_pass() {
     );
 }
 
+
+
+#[test]
+fn epistemic_downgrade_into_deterministic_gate_is_rejected() {
+    let source = concat!(
+        "intent mission {\n",
+        "  uncertainty { confidence 0.95 }\n",
+        "  goal deploy {\n",
+        "    condition control_gate(signal)\n",
+        "  }\n",
+        "}\n",
+    );
+
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2002")
+        .expect("missing epistemic gate diagnostic");
+
+    assert!(diagnostic.message.contains("confidence 0.950"));
+    assert!(diagnostic.message.contains("control_gate"));
+}
+
 #[test]
 fn capability_leakage_is_rejected_with_source_span() {
     let source = "fn unsafe_action() { dispatch_network_command(); }";
