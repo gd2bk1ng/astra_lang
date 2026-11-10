@@ -1,11 +1,11 @@
 # SyntraLang
 
-**SyntraLang** is the language foundation for intent-oriented, symbolic, cognitive,
-and AI systems in the Syntra ecosystem.
+**SyntraLang** is an independent, intent-oriented language foundation for AI,
+symbolic reasoning, cognitive systems, and Syntra ecosystem tooling.
 
-This repository is the continuation of the original Astra language work. Historical
-Astra source is preserved as the foundation while the active language identity and
-public API move forward as **SyntraLang**.
+SyntraLang is the successor to the historical Astra language work. The original
+Astra repository is retained as historical source material; this branch is the
+active SyntraLang development line.
 
 ## Current milestone: lexical foundation
 
@@ -13,55 +13,97 @@ The lexer is being rebuilt as a strict, deterministic compiler component.
 
 It provides:
 
-- complete punctuation and operator recognition required by the current grammar
-- identifiers and Unicode identifiers
+- grammar-aligned punctuation and operator recognition
+- Unicode identifiers
 - integer, floating-point, string, and boolean literals
 - line and block comments
-- stable byte spans with line/column positions
+- stable byte offsets with line/column positions
+- exact raw lexeme preservation
+- decoded literal values
 - deterministic lexical diagnostics
 - malformed-input rejection
 - no silent character loss
-- unit tests for the lexical contract
-- a public library API for downstream AI and compiler projects
+- focused unit tests for valid and invalid input
+- a public library API for downstream AI, compiler, IDE, and kernel projects
 
 ## Library use
 
-```rust
+\`\`\`rust
 use syntra_lang::{Lexer, TokenKind};
 
 let tokens = Lexer::new("intent syntra { motive \"reason\" }")
     .tokenize()
     .expect("valid Syntra source");
 
-assert!(matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)));
-```
+assert!(matches!(
+    tokens.last().map(|token| &token.kind),
+    Some(TokenKind::Eof)
+));
+\`\`\`
 
-## Design principle
+## Design principles
 
-SyntraLang is intended to become a reusable language infrastructure layer.
+SyntraLang is intended to be reusable independently of Syntra Kernel.
 
-The lexer must therefore remain:
+The lexical layer therefore prioritizes:
 
-1. deterministic
-2. explicit
-3. lossless with respect to recognized source semantics
-4. strict about malformed input
-5. independently testable
-6. stable enough for compiler, IDE, AI-agent, and Syntra Kernel consumers
+1. deterministic behavior
+2. explicit syntax
+3. source-aware tokens
+4. strict malformed-input handling
+5. stable diagnostics
+6. Unicode support
+7. independent testability
+8. a small, predictable public API
 
-Advanced AI semantics, symbolic reasoning, cognition, self-modification, and runtime
-behavior belong to later compiler/runtime layers. The lexer establishes the trusted
-front door for those systems.
+The lexer does **not** decide whether an identifier is a keyword. Syntactic roles
+such as \`intent\`, \`fn\`, \`rule\`, and \`modify\` remain parser concerns. This
+keeps the token contract stable and avoids the historical lexer/parser mismatch
+where one layer treated a word as a dedicated token and another expected an
+identifier.
 
 ## Historical continuity
 
-The original Astra implementation is not discarded. Existing grammar, parser, AST,
-type-system, and research concepts are being recovered and reconciled rather than
-rewritten blindly.
+The historical Astra implementation is preserved for recovery and research.
+Its grammar, parser, AST, type-system experiments, intent model, and tests are
+being audited and reconciled rather than discarded.
 
-The active development branch for this recovery is:
+The active development branch is:
 
-`syntra_lang`
+\`syntra_lang\`
+
+## Roadmap
+
+### Phase 1 — Lexical contract
+- complete lexer
+- token model
+- diagnostics
+- lexical fixtures
+- CI verification
+
+### Phase 2 — Syntax
+- Syntra parser
+- unified AST
+- grammar conformance tests
+
+### Phase 3 — Semantics
+- type system
+- effects
+- symbolic constructs
+- intent semantics
+
+### Phase 4 — Integration
+- stable IR
+- SDK/tooling
+- APC integrations
+- Syntra Kernel integration
+
+### Phase 5 — Ecosystem
+- LSP/IDE support
+- documentation
+- examples
+- compatibility/versioning
+- third-party adoption
 
 ## License
 
