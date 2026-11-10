@@ -92,9 +92,10 @@ The active development branch is:
 
 ### Phase 2 — Syntax
 - borrowed-token architecture — implemented
-- Syntra parser
+- parser cursor — implemented
+- borrowed AST layout — implemented
+- initial recursive-descent parser — implemented
 - cognitive primitive parser specification
-- unified AST
 - grammar conformance tests
 
 ### Phase 3 — Semantics
