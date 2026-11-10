@@ -128,6 +128,8 @@ the lexer.
 
 ## 9. Zero-copy design target
 
+The lexical layer now provides the required borrowed-token boundary. Tokens are `Token<'a>` values whose source-bearing fields borrow directly from the lexer input.
+
 The long-term parser target is source-borrowing AST data:
 
 `AST<'a>`
@@ -137,15 +139,13 @@ buffer.
 
 The parser should avoid cloning source text solely to construct syntax nodes.
 
-However, the current SyntraLang token API owns `String` values and returns a
-heap-backed token vector. Therefore a zero-allocation parser cannot honestly be
-claimed yet.
+The current token vector is still heap-backed because `tokenize()` returns `Vec<Token<'a>>`, but token contents themselves are now zero-copy. Therefore a zero-allocation lexer/parser pipeline cannot honestly be claimed yet.
 
 The migration should happen deliberately:
 
-1. define borrowed token representation;
-2. preserve source spans;
-3. establish lifetime invariants;
+1. define borrowed token representation; **done**
+2. preserve source spans; **done**
+3. establish lifetime invariants; **done**
 4. benchmark allocation behavior;
 5. migrate parser/AST;
 6. only then consider a `no_std` core boundary.
