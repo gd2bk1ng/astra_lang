@@ -86,7 +86,16 @@ The active development branch is:
 - token model
 - diagnostics
 - lexical fixtures
+- lexical contract matrix
+- numeric edge-case regression suite
 - CI verification
+
+### Phase 2 — Syntax
+- borrowed-token architecture
+- Syntra parser
+- cognitive primitive parser specification
+- unified AST
+- grammar conformance tests
 
 ### Phase 2 — Syntax
 - Syntra parser
