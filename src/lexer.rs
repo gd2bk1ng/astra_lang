@@ -72,7 +72,7 @@ impl<'a> Lexer<'a> {
                     self.line,
                     self.column,
                 );
-                return Ok(Token::with_lexeme(TokenKind::Eof, span, ""));
+                return Ok(Token::new(TokenKind::Eof, span, ""));
             }
         };
 
