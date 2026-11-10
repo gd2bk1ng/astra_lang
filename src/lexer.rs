@@ -1,5 +1,6 @@
 use crate::tokens::{Span, Token, TokenKind};
 use std::fmt;
+use unicode_ident::{is_xid_continue, is_xid_start};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexError {
@@ -507,11 +508,11 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_ident_start(c: char) -> bool {
-    c == '_' || c.is_alphabetic()
+    c == '_' || is_xid_start(c)
 }
 
 fn is_ident_continue(c: char) -> bool {
-    c == '_' || c.is_alphanumeric()
+    is_xid_continue(c)
 }
 
 #[cfg(test)]
@@ -585,6 +586,14 @@ mod tests {
                 TokenKind::RBrace,
                 TokenKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn supports_combining_marks_in_identifiers() {
+        assert_eq!(
+            kinds("é"),
+            vec![TokenKind::Identifier("é".into()), TokenKind::Eof]
         );
     }
 
