@@ -110,6 +110,22 @@ impl DiagnosticEngine {
             .map(|error| Self::parse_error(source, error))
             .collect()
     }
+
+    /// Construct a source-aware diagnostic for a semantic verification error.
+    pub fn semantic_error<'a>(
+        source: &'a str,
+        code: &'static str,
+        message: impl Into<String>,
+        span: Span,
+    ) -> Diagnostic<'a> {
+        Diagnostic {
+            severity: DiagnosticSeverity::Error,
+            code,
+            message: message.into(),
+            span,
+            source,
+        }
+    }
 }
 
 fn line_start(source: &str, offset: usize) -> usize {
