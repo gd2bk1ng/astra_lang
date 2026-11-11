@@ -490,9 +490,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 }
                 "constraint" => {
                     let value = self.parse_expression()?;
+                    let value_end = value.span().end;
                     GovernanceMember::Constraint {
                         value,
-                        span: Span::with_pos(member_start.start, value.span().end, member_start.line, member_start.column),
+                        span: Span::with_pos(member_start.start, value_end, member_start.line, member_start.column),
                     }
                 }
                 _ => return Err(ParseError::unexpected("requires, approval, policy, or constraint", member_token)),
