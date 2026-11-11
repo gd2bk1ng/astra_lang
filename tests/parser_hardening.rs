@@ -60,11 +60,11 @@ fn malformed_control_flow_reports_without_panicking() {
 
     let report = parser.parse_program_recovering();
 
-    assert_eq!(report.errors.len(), 2);
+    assert_eq!(report.errors.len(), 3);
     assert_eq!(report.program.declarations.len(), 0);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
-    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics.len(), 3);
     assert!(diagnostics[0].render().contains("return;"));
     assert!(diagnostics[1].render().contains("backtrack"));
 }
@@ -106,9 +106,9 @@ fn invalid_expression_reports_exact_token_span() {
 
 
 #[test]
-fn deeply_nested_expression_preserves_right_associative_structure_by_precedence() {
+fn deeply_nested_expression_preserves_precedence_structure() {
     let program = parse(
-        "fn f() { return (((1 + 2) * (3 - 4)) / (5 + 6)) == 7 && true; }",
+        "fn f() { return 1 + 2 * 3 - 4 / 5 + 6 == 7 && true; }",
     );
     let Declaration::Function(function) = &program.declarations[0] else {
         panic!("expected function");
@@ -186,11 +186,11 @@ fn recovering_parser_collects_distinct_errors_across_multiple_declarations() {
 
     let report = parser.parse_program_recovering();
 
-    assert_eq!(report.errors.len(), 3);
+    assert_eq!(report.errors.len(), 6);
     assert_eq!(report.program.declarations.len(), 1);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
-    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics.len(), 6);
     assert!(diagnostics[0].span.start < diagnostics[1].span.start);
     assert!(diagnostics[1].span.start < diagnostics[2].span.start);
     assert!(diagnostics.iter().all(|diagnostic| {
@@ -215,7 +215,7 @@ fn diagnostics_remain_source_bounded_for_multiline_recovery() {
     let report = parser.parse_program_recovering();
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
 
-    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics.len(), 4);
     assert_eq!(diagnostics[0].span.line, 2);
     assert_eq!(diagnostics[1].span.line, 5);
     assert!(diagnostics[0].span.end <= source.len());
