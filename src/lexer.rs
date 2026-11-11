@@ -192,7 +192,7 @@ impl<'a> Lexer<'a> {
 
     fn token_from_source(
         &self,
-        kind: TokenKind,
+        kind: TokenKind<'a>,
         start: usize,
         end: usize,
         line: usize,
@@ -537,7 +537,7 @@ fn parse_decimal_float(raw: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
-    fn kinds(src: &str) -> Vec<TokenKind> {
+    fn kinds<'a>(src: &'a str) -> Vec<TokenKind<'a>> {
         Lexer::new(src)
             .tokenize()
             .unwrap()

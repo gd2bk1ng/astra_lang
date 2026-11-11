@@ -119,25 +119,42 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     }
 
     fn parse_function(&mut self, grad: bool) -> Result<Function<'src>, ParseError<'src>> {
-        let start = self.expect_word("fn")?.span.start;
+        let start_token = self.expect_word("fn")?;
+        let start = start_token.span.start;
         let name = self.expect_identifier()?;
         self.expect(TokenKind::LParen, "(")?;
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen, ")")?;
         let return_type = if self.at(TokenKind::Arrow) { self.bump(); Some(self.parse_type()?) } else { None };
         let body = self.parse_block()?;
-        Ok(Function { name, params, return_type, body, span: Span::with_pos(start, body.span.end, 1, 1), grad })
+        let body_end = body.span.end;
+        Ok(Function {
+            name,
+            params,
+            return_type,
+            body,
+            span: Span::with_pos(start, body_end, start_token.span.line, start_token.span.column),
+            grad,
+        })
     }
 
     fn parse_rule(&mut self) -> Result<Rule<'src>, ParseError<'src>> {
-        let start = self.expect_word("rule")?.span.start;
+        let start_token = self.expect_word("rule")?;
+        let start = start_token.span.start;
         let name = self.expect_identifier()?;
         self.expect(TokenKind::LParen, "(")?;
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen, ")")?;
         let return_type = if self.at(TokenKind::Arrow) { self.bump(); Some(self.parse_type()?) } else { None };
         let body = self.parse_block()?;
-        Ok(Rule { name, params, return_type, body, span: Span::with_pos(start, body.span.end, 1, 1) })
+        let body_end = body.span.end;
+        Ok(Rule {
+            name,
+            params,
+            return_type,
+            body,
+            span: Span::with_pos(start, body_end, start_token.span.line, start_token.span.column),
+        })
     }
 
     fn parse_intent(&mut self) -> Result<Intent<'src>, ParseError<'src>> {
@@ -234,7 +251,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "goal member",
                 span: start_token.span,
             })?;
@@ -249,7 +266,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 "description" => {
                     let token = self.expect_string_literal()?;
                     GoalMember::Description {
-                        value: token.raw,
+                        value: match token.kind {
+                        TokenKind::StringLiteral { raw } => raw,
+                        _ => unreachable!(),
+                    },
                         span: Span::with_pos(
                             member_start.start,
                             token.span.end,
@@ -317,7 +337,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let token = *self.current().ok_or(ParseError::UnexpectedEof {
+            let token = self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "effect item",
                 span: start_token.span,
             })?;
@@ -358,7 +378,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "uncertainty member",
                 span: start_token.span,
             })?;
@@ -380,7 +400,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 "assumption" => {
                     let token = self.expect_string_literal()?;
                     UncertaintyMember::Assumption {
-                        value: token.raw,
+                        value: match token.kind {
+                        TokenKind::StringLiteral { raw } => raw,
+                        _ => unreachable!(),
+                    },
                         span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
                     }
                 }
@@ -394,7 +417,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 "source" => {
                     let token = self.expect_string_literal()?;
                     UncertaintyMember::Source {
-                        value: token.raw,
+                        value: match token.kind {
+                        TokenKind::StringLiteral { raw } => raw,
+                        _ => unreachable!(),
+                    },
                         span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
                     }
                 }
@@ -426,7 +452,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 });
             }
 
-            let member_token = *self.current().ok_or(ParseError::UnexpectedEof {
+            let member_token = self.current().ok_or(ParseError::UnexpectedEof {
                 expected: "governance member",
                 span: start_token.span,
             })?;
@@ -455,7 +481,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 "policy" => {
                     let token = self.expect_string_literal()?;
                     GovernanceMember::Policy {
-                        value: token.raw,
+                        value: match token.kind {
+                        TokenKind::StringLiteral { raw } => raw,
+                        _ => unreachable!(),
+                    },
                         span: Span::with_pos(member_start.start, token.span.end, member_start.line, member_start.column),
                     }
                 }
@@ -656,8 +685,8 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     }
     fn at(&self, kind: TokenKind<'src>) -> bool { self.current().is_some_and(|t| t.kind == kind) }
     fn at_word(&self, word: &str) -> bool { self.current().is_some_and(|t| matches!(t.kind, TokenKind::Identifier(v) if v == word)) }
-    fn peek_word(&self, n: usize, word: &str) -> bool { self.peek(n).is_some_and(|t| matches!(t.kind, TokenKind::Identifier(v) if v == word)) }
-    fn peek_kind(&self, n: usize) -> Option<TokenKind<'src>> { self.peek(n).map(|t| t.kind) }
+    fn peek_word(&self, n: usize, word: &str) -> bool { self.cursor.peek(n).is_some_and(|t| matches!(t.kind, TokenKind::Identifier(v) if v == word)) }
+    fn peek_kind(&self, n: usize) -> Option<TokenKind<'src>> { self.cursor.peek(n).map(|t| t.kind) }
     fn current_span(&self) -> Option<Span> { self.current().map(|t| t.span) }
     fn previous_end(&self) -> Option<usize> { self.cursor.previous().map(|t| t.span.end) }
     fn bump(&mut self) -> Option<&'tokens Token<'src>> { self.cursor.bump() }

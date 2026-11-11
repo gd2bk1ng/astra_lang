@@ -52,7 +52,7 @@ fn parser_preserves_intent_member_source() {
     };
 
     assert_eq!(value, "reason");
-    assert!(std::ptr::eq(value.as_ptr(), source["intent syntra { motive "".len()..].as_ptr()));
+    assert!(std::ptr::eq(value.as_ptr(), source["intent syntra { motive \"".len()..].as_ptr()));
 }
 
 #[test]
