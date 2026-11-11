@@ -590,14 +590,14 @@ mod tests {
         assert_eq!(
             kinds(r#"intent 東京 { value 42 other 3.14 text "hello\nworld" true false }"#),
             vec![
-                TokenKind::Identifier("intent".into()),
-                TokenKind::Identifier("東京".into()),
+                TokenKind::Identifier("intent"),
+                TokenKind::Identifier("東京"),
                 TokenKind::LBrace,
-                TokenKind::Identifier("value".into()),
+                TokenKind::Identifier("value"),
                 TokenKind::IntLiteral(42),
-                TokenKind::Identifier("other".into()),
+                TokenKind::Identifier("other"),
                 TokenKind::FloatLiteral("3.14".parse::<f64>().unwrap()),
-                TokenKind::Identifier("text".into()),
+                TokenKind::Identifier("text"),
                 TokenKind::StringLiteral { raw: "hello\\nworld" },
                 TokenKind::BoolLiteral(true),
                 TokenKind::BoolLiteral(false),
@@ -611,7 +611,7 @@ mod tests {
     fn supports_combining_marks_in_identifiers() {
         assert_eq!(
             kinds("é"),
-            vec![TokenKind::Identifier("é".into()), TokenKind::Eof]
+            vec![TokenKind::Identifier("é"), TokenKind::Eof]
         );
     }
 
@@ -633,8 +633,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(tokens[0].kind, TokenKind::At);
-        assert_eq!(tokens[1].kind, TokenKind::Identifier("grad".into()));
-        assert_eq!(tokens[2].kind, TokenKind::Identifier("fn".into()));
+        assert_eq!(tokens[1].kind, TokenKind::Identifier("grad"));
+        assert_eq!(tokens[2].kind, TokenKind::Identifier("fn"));
     }
 
     #[test]
