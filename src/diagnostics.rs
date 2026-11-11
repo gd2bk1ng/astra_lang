@@ -155,8 +155,8 @@ mod tests {
 
         assert_eq!(diagnostic.span.line, 2);
         assert_eq!(diagnostic.span.column, 10);
-        assert_eq!(diagnostic.byte_range(), 21..21);
-        assert!(diagnostic.render().contains(" --> 2:10 (bytes 21..21)"));
+        assert_eq!(diagnostic.byte_range(), 21..22);
+        assert!(diagnostic.render().contains(" --> 2:10 (bytes 21..22)"));
         assert!(diagnostic.render().contains("return ;"));
     }
 }
