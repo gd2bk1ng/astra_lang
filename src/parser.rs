@@ -612,8 +612,7 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
 
     fn parse_binary(&mut self, min: u8) -> Result<Expression<'src>, ParseError<'src>> {
         let mut left = self.parse_unary()?;
-        loop {
-            let Some((op, precedence)) = self.binary_operator() else { break };
+        while let Some((op, precedence)) = self.binary_operator() {
             if precedence < min { break; }
             self.bump(); let right = self.parse_binary(precedence + 1)?;
             let span = Span::with_pos(left.span().start, right.span().end, 1, 1);
