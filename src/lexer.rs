@@ -322,7 +322,7 @@ impl<'a> Lexer<'a> {
         let end = self.offset();
         let raw = &self.input[start..end];
 
-        if !has_digits || raw.ends_with('_') || raw.ends_with('.') || raw.contains("__") {
+        if !has_digits || raw.ends_with('_') || raw.ends_with('.') || raw.contains("__") || raw.contains("_.") {
             return Err(LexError::InvalidNumber {
                 lexeme: raw,
                 span: self.make_span(start, end, line, column),
