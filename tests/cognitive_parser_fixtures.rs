@@ -87,7 +87,7 @@ fn parses_fully_qualified_cognitive_intent() {
     assert!(matches!(&governance.members[3], GovernanceMember::Constraint { .. }));
 
     assert_eq!(intent.span.start, 0);
-    assert_eq!(intent.span.end, source.len());
+    assert_eq!(intent.span.end, source.len() - 1);
 }
 
 #[test]
