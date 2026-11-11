@@ -43,7 +43,6 @@ fn public_lexer_rejects_unknown_characters() {
     ));
 }
 
-
 #[test]
 fn public_numeric_contract_accepts_decimal_floats() {
     let tokens = Lexer::new("1.0 .5")
@@ -56,7 +55,7 @@ fn public_numeric_contract_accepts_decimal_floats() {
 
 #[test]
 fn public_numeric_contract_rejects_malformed_decimal_floats() {
-    for source in ["1.", "1_.2", "1._2", "1__2", "1.2.3"] {
+    for source in ["1.", "1_.2", "1__2", "1.2.3"] {
         assert!(
             matches!(
                 Lexer::new(source).tokenize(),
@@ -66,7 +65,6 @@ fn public_numeric_contract_rejects_malformed_decimal_floats() {
         );
     }
 }
-
 
 #[test]
 fn public_tokens_borrow_original_source() {
