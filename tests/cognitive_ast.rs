@@ -11,7 +11,7 @@ fn span(start: usize, end: usize) -> Span {
 #[test]
 fn cognitive_ast_preserves_borrowed_source_fields() {
     let source = "intent plan { goal deliver { description \"ship\" } }";
-    let goal_name = &source[19..25];
+    let goal_name = &source[19..26];
     let description = &source[41..47];
 
     let goal = Goal {
