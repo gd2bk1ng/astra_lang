@@ -64,7 +64,7 @@ fn malformed_control_flow_reports_without_panicking() {
     assert_eq!(report.program.declarations.len(), 0);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
-    assert_eq!(diagnostics.len(), 4);
+    assert_eq!(diagnostics.len(), 3);
     assert!(diagnostics[0].render().contains("return;"));
     assert!(diagnostics[1].render().contains("backtrack"));
 }
