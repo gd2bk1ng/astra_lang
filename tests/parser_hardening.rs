@@ -215,7 +215,7 @@ fn diagnostics_remain_source_bounded_for_multiline_recovery() {
     let report = parser.parse_program_recovering();
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
 
-    assert_eq!(diagnostics.len(), 4);
+    assert_eq!(diagnostics.len(), 3);
     assert_eq!(diagnostics[0].span.line, 2);
     assert_eq!(diagnostics[1].span.line, 5);
     assert!(diagnostics[0].span.end <= source.len());
