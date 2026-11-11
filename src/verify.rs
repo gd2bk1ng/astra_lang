@@ -312,14 +312,14 @@ impl<'src> SemanticVerifier<'src> {
                             None => entry.upper,
                         };
 
-                        if let (Some(lower), Some(upper)) = (entry.lower, entry.upper) {
-                            if lower > upper {
-                                self.error(
-                                    CODE_GOVERNANCE_CONTRADICTION,
-                                    format!("governance constraints on '{name}' are contradictory"),
-                                    *span,
-                                );
-                            }
+                        if let (Some(lower), Some(upper)) = (entry.lower, entry.upper)
+                            && lower > upper
+                        {
+                            self.error(
+                                CODE_GOVERNANCE_CONTRADICTION,
+                                format!("governance constraints on '{name}' are contradictory"),
+                                *span,
+                            );
                         }
                     } else {
                         let _ = self.infer_expression(value);
@@ -388,16 +388,16 @@ impl<'src> SemanticVerifier<'src> {
                     }
 
                     if is_deterministic_gate(name) {
-                        if let Some(EpistemicState::Probabilistic { confidence }) = argument_state {
-                            if confidence < 1.0 {
-                                self.error(
-                                    CODE_EPISTEMIC_GATE,
-                                    format!(
-                                        "probabilistic argument with confidence {confidence:.3} cannot enter deterministic gate '{name}' without explicit resolution"
-                                    ),
-                                    *span,
-                                );
-                            }
+                        if let Some(EpistemicState::Probabilistic { confidence }) = argument_state
+                            && confidence < 1.0
+                        {
+                            self.error(
+                                CODE_EPISTEMIC_GATE,
+                                format!(
+                                    "probabilistic argument with confidence {confidence:.3} cannot enter deterministic gate '{name}' without explicit resolution"
+                                ),
+                                *span,
+                            );
                         }
                         return EpistemicState::Deterministic;
                     }
@@ -458,16 +458,16 @@ impl<'src> SemanticVerifier<'src> {
     }
 
     fn verify_deterministic_gate(&mut self, state: EpistemicState, span: Span) {
-        if let EpistemicState::Probabilistic { confidence } = state {
-            if confidence < 1.0 {
-                self.error(
-                    CODE_EPISTEMIC_GATE,
-                    format!(
-                        "probabilistic value with confidence {confidence:.3} cannot enter a deterministic gate without explicit resolution"
-                    ),
-                    span,
-                );
-            }
+        if let EpistemicState::Probabilistic { confidence } = state
+            && confidence < 1.0
+        {
+            self.error(
+                CODE_EPISTEMIC_GATE,
+                format!(
+                    "probabilistic value with confidence {confidence:.3} cannot enter a deterministic gate without explicit resolution"
+                ),
+                span,
+            );
         }
     }
 
