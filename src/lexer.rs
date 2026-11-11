@@ -692,7 +692,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            Lexer::new("1._2").tokenize(),
+            Lexer::new("1_.2").tokenize(),
             Err(LexError::InvalidNumber { .. })
         ));
 
