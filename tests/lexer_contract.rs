@@ -10,7 +10,7 @@ fn public_lexer_api_handles_intent_source() {
 
     assert!(matches!(
         tokens.first().map(|token| &token.kind),
-        Some(TokenKind::Identifier(name)) if name == "intent"
+        Some(TokenKind::Identifier(name)) if *name == "intent"
     ));
     assert!(matches!(
         tokens.last().map(|token| &token.kind),
