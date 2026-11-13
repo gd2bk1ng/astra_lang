@@ -223,10 +223,3 @@ fn diagnostics_remain_source_bounded_for_multiline_recovery() {
     assert!(diagnostics[1].render().contains("bytes"));
 }
 
-    assert_eq!(diagnostics[0].span.line, 2);
-    assert_eq!(diagnostics[1].span.line, 5);
-    assert!(diagnostics[0].span.end <= source.len());
-    assert!(diagnostics[1].span.end <= source.len());
-    assert!(diagnostics[0].render().contains("bytes"));
-    assert!(diagnostics[1].render().contains("bytes"));
-}
