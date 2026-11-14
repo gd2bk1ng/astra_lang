@@ -361,22 +361,41 @@ impl<'src> SemanticVerifier<'src> {
     fn verify_block(&mut self, block: &Block<'src>) {
         for statement in &block.statements {
             match statement {
-                Statement::Let { value, .. } => {
+                Statement::Let { name, value, span } => {
+                    // Initializers are checked before declaration, so the new
+                    // binding cannot resolve to itself during initialization.
                     if let Some(value) = value {
                         let _ = self.infer_expression(value);
                     }
+                    self.register_local_binding(name, *span);
                 }
                 Statement::Return { value, .. }
                 | Statement::Expression { expression: value, .. } => {
                     let _ = self.infer_expression(value);
                 }
-                Statement::Backtrack { body, .. } => self.verify_block(body),
+                Statement::Backtrack { body, .. } => {
+                    self.epistemic_environment.enter_scope();
+                    self.verify_block(body);
+                    self.epistemic_environment.exit_scope();
+                }
                 Statement::Annotation(annotation) => {
                     for argument in &annotation.arguments {
                         let _ = self.infer_expression(argument);
                     }
                 }
             }
+        }
+    }
+
+    fn register_local_binding(&mut self, name: &'src str, span: Span) {
+        let binding = EpistemicBinding::new(name, "Unknown", EpistemicState::Uncertain, span);
+
+        if self.epistemic_environment.declare(name, binding).is_err() {
+            self.error(
+                CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!("local binding '{name}' is already declared in this scope"),
+                span,
+            );
         }
     }
 
@@ -441,7 +460,9 @@ impl<'src> SemanticVerifier<'src> {
                 combine_epistemic(left_state, right_state)
             }
             Expression::Block(block) => {
+                self.epistemic_environment.enter_scope();
                 self.verify_block(block);
+                self.epistemic_environment.exit_scope();
                 ConfidenceState::Unknown
             }
             Expression::Symbolic { .. } => ConfidenceState::Unknown,
