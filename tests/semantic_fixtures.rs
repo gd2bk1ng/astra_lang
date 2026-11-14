@@ -337,6 +337,8 @@ fn type_compatibility_allows_numeric_promotion_and_cross_type_equality() {
         "  let sum = 1 + 2.5;\n",
         "  let equal = 1 == 1.0;\n",
         "  let ordered = 1.0 >= 1;\n",
+        "  let logical = true || false;\n",
+        "  let string_equal = \"left\" == \"right\";\n",
         "}\n",
     );
     let report = verify(source);
@@ -373,5 +375,23 @@ fn type_compatibility_checks_unary_not_and_negation() {
     assert_eq!(
         report.diagnostics.iter().filter(|diagnostic| diagnostic.code == "SYN2301").count(),
         2
+    );
+}
+
+#[test]
+fn type_compatibility_rejects_incompatible_arithmetic_and_equality() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let invalid_sum = 1 + \"text\";\n",
+        "  let invalid_equal = true == \"true\";\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert_eq!(
+        report.diagnostics.iter().filter(|diagnostic| diagnostic.code == "SYN2301").count(),
+        2,
+        "each known incompatible operation should produce one diagnostic: {:?}",
+        report.diagnostics
     );
 }
