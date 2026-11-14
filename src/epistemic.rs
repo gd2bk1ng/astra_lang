@@ -182,15 +182,15 @@ impl<'src> EpistemicEnvironment<'src> {
             .ok_or(EpistemicTransitionError::ContractNotDefined)?;
         let old_state = binding.epistemic_state;
 
+        if contract.permits(old_state, new_state) {
+            binding.update_state_unchecked(new_state);
+            return Ok(());
+        }
+
         if !contract.allowed_from.contains(&old_state) {
             return Err(EpistemicTransitionError::SourceStateNotAllowed);
         }
-        if !contract.allowed_to.contains(&new_state) {
-            return Err(EpistemicTransitionError::TargetStateNotAllowed);
-        }
-
-        binding.update_state_unchecked(new_state);
-        Ok(())
+        Err(EpistemicTransitionError::TargetStateNotAllowed)
     }
 
     /// Compatibility spelling for callers that previously used update_state.
