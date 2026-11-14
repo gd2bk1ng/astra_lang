@@ -487,6 +487,67 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
+    /// Infer the ordinary value type of an expression without changing
+    /// confidence or epistemic state.
+    ///
+    /// This pass is intentionally conservative: unsupported constructs and
+    /// unknown identifiers produce `SemanticType::Unknown`.
+    fn infer_expression_type(&self, expression: &Expression<'src>) -> SemanticType<'src> {
+        match expression {
+            Expression::Literal(literal, _) => match literal {
+                Literal::Integer(_) => SemanticType::Integer,
+                Literal::Float(_) => SemanticType::Float,
+                Literal::String(_) => SemanticType::String,
+                Literal::Boolean(_) => SemanticType::Boolean,
+            },
+            Expression::Identifier(name, _) => self
+                .epistemic_environment
+                .lookup(name)
+                .map(|binding| semantic_type_from_name(binding.ty.type_name))
+                .unwrap_or(SemanticType::Unknown),
+            Expression::Unary { operator, operand, .. } => {
+                let operand_type = self.infer_expression_type(operand);
+                match operator {
+                    UnaryOp::Negate => match operand_type {
+                        SemanticType::Integer => SemanticType::Integer,
+                        SemanticType::Float => SemanticType::Float,
+                        _ => SemanticType::Unknown,
+                    },
+                    UnaryOp::Not => SemanticType::Boolean,
+                }
+            }
+            Expression::Binary { left, operator, right, .. } => {
+                let left_type = self.infer_expression_type(left);
+                let right_type = self.infer_expression_type(right);
+
+                match operator {
+                    BinaryOp::Equal
+                    | BinaryOp::NotEqual
+                    | BinaryOp::Less
+                    | BinaryOp::LessEqual
+                    | BinaryOp::Greater
+                    | BinaryOp::GreaterEqual
+                    | BinaryOp::And
+                    | BinaryOp::Or => SemanticType::Boolean,
+                    BinaryOp::Add
+                    | BinaryOp::Subtract
+                    | BinaryOp::Multiply
+                    | BinaryOp::Divide => match (left_type, right_type) {
+                        (SemanticType::Integer, SemanticType::Integer) => SemanticType::Integer,
+                        (SemanticType::Integer, SemanticType::Float)
+                        | (SemanticType::Float, SemanticType::Integer)
+                        | (SemanticType::Float, SemanticType::Float) => SemanticType::Float,
+                        _ => SemanticType::Unknown,
+                    },
+                }
+            }
+            Expression::Call { .. }
+            | Expression::Block(_)
+            | Expression::Symbolic { .. }
+            | Expression::SelfModify { .. } => SemanticType::Unknown,
+        }
+    }
+
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
         let required = match operation {
             "allocate_memory" => Some("AllocateMemory"),
@@ -605,4 +666,155 @@ fn is_resolution_operation(name: &str) -> bool {
 
 fn is_deterministic_gate(name: &str) -> bool {
     matches!(name, "deterministic_gate" | "control_gate" | "assert")
+}
+
+/// Translate a declared binding type into the verifier's currently supported
+/// value-type vocabulary. User-defined or unsupported names remain unknown.
+fn semantic_type_from_name(type_name: &str) -> SemanticType<'_> {
+    match type_name {
+        "Integer" | "Int" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => {
+            SemanticType::Integer
+        }
+        "Float" | "f32" | "f64" | "Double" => SemanticType::Float,
+        "String" | "str" => SemanticType::String,
+        "Boolean" | "Bool" | "bool" => SemanticType::Boolean,
+        "Unit" | "()" => SemanticType::Unit,
+        _ => SemanticType::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod expression_type_tests {
+    use super::*;
+
+    fn verifier() -> SemanticVerifier<'static> {
+        SemanticVerifier::new("")
+    }
+
+    fn span() -> Span {
+        Span::new(0, 0)
+    }
+
+    #[test]
+    fn literal_expression_types_are_inferred_without_environment_mutation() {
+        let verifier = verifier();
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Literal(Literal::Integer(7), span())),
+            SemanticType::Integer
+        );
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Literal(Literal::Float(1.5), span())),
+            SemanticType::Float
+        );
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Literal(Literal::String("x"), span())),
+            SemanticType::String
+        );
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Literal(Literal::Boolean(true), span())),
+            SemanticType::Boolean
+        );
+        assert!(verifier.epistemic_environment.lookup("x").is_none());
+    }
+
+    #[test]
+    fn identifier_types_come_from_existing_binding_metadata() {
+        let mut verifier = verifier();
+        let binding = EpistemicBinding::new(
+            "count",
+            "Integer",
+            EpistemicState::Uncertain,
+            span(),
+        );
+        verifier
+            .epistemic_environment
+            .declare("count", binding)
+            .expect("test binding declaration succeeds");
+
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Identifier("count", span())),
+            SemanticType::Integer
+        );
+        assert_eq!(
+            verifier
+                .epistemic_environment
+                .lookup("count")
+                .expect("binding remains present")
+                .epistemic_state,
+            EpistemicState::Uncertain
+        );
+        assert_eq!(
+            verifier.infer_expression_type(&Expression::Identifier("missing", span())),
+            SemanticType::Unknown
+        );
+    }
+
+    #[test]
+    fn arithmetic_and_operator_types_are_derived_conservatively() {
+        let verifier = verifier();
+        let integer = Expression::Literal(Literal::Integer(1), span());
+        let float = Expression::Literal(Literal::Float(2.0), span());
+        let boolean = Expression::Literal(Literal::Boolean(true), span());
+
+        let integer_plus_integer = Expression::Binary {
+            left: Box::new(integer),
+            operator: BinaryOp::Add,
+            right: Box::new(Expression::Literal(Literal::Integer(2), span())),
+            span: span(),
+        };
+        assert_eq!(
+            verifier.infer_expression_type(&integer_plus_integer),
+            SemanticType::Integer
+        );
+
+        let integer_plus_float = Expression::Binary {
+            left: Box::new(Expression::Literal(Literal::Integer(1), span())),
+            operator: BinaryOp::Add,
+            right: Box::new(float),
+            span: span(),
+        };
+        assert_eq!(
+            verifier.infer_expression_type(&integer_plus_float),
+            SemanticType::Float
+        );
+
+        let comparison = Expression::Binary {
+            left: Box::new(Expression::Literal(Literal::Integer(1), span())),
+            operator: BinaryOp::Less,
+            right: Box::new(Expression::Literal(Literal::Integer(2), span())),
+            span: span(),
+        };
+        assert_eq!(
+            verifier.infer_expression_type(&comparison),
+            SemanticType::Boolean
+        );
+
+        let logical_not = Expression::Unary {
+            operator: UnaryOp::Not,
+            operand: Box::new(boolean),
+            span: span(),
+        };
+        assert_eq!(
+            verifier.infer_expression_type(&logical_not),
+            SemanticType::Boolean
+        );
+    }
+
+    #[test]
+    fn unsupported_expression_types_remain_unknown() {
+        let verifier = verifier();
+        let call = Expression::Call {
+            callee: Box::new(Expression::Identifier("compute", span())),
+            arguments: Vec::new(),
+            span: span(),
+        };
+        assert_eq!(
+            verifier.infer_expression_type(&call),
+            SemanticType::Unknown
+        );
+        assert_eq!(
+            semantic_type_from_name("CustomRecord"),
+            SemanticType::Unknown
+        );
+    }
 }
