@@ -65,9 +65,9 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     /// Parse as much of the program as possible, recovering at stable syntax
     /// boundaries instead of aborting after the first malformed declaration.
     ///
-    /// Recovery consumes through a semicolon or a closing brace. This keeps
-    /// malformed input from trapping the parser in a no-progress loop while
-    /// preserving the normal fail-fast `parse_program` API.
+    /// Recovery abandons a malformed declaration at its enclosing block
+    /// boundary, preventing a block's closing brace from being reinterpreted
+    /// as a top-level declaration. The fail-fast `parse_program` API is unchanged.
     pub fn parse_program_recovering(&mut self) -> ParseReport<'src> {
         let start = self.current_span().map(|s| s.start).unwrap_or(0);
         let start_position = self.current_span().map(|s| (s.line, s.column)).unwrap_or((1, 1));
@@ -75,11 +75,12 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         let mut errors = Vec::new();
 
         while !self.cursor.is_eof() {
+            let declaration_start = self.cursor.position();
             match self.parse_declaration() {
                 Ok(declaration) => declarations.push(declaration),
                 Err(error) => {
                     errors.push(error);
-                    self.synchronize();
+                    self.synchronize(declaration_start);
                 }
             }
         }
@@ -94,7 +95,48 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         }
     }
 
-    fn synchronize(&mut self) {
+    fn synchronize(&mut self, declaration_start: usize) {
+        // Reconstruct the brace depth consumed by the failed declaration. If
+        // parsing failed inside a block, discard the rest of that declaration
+        // through its matching closing brace instead of stopping at an inner
+        // statement semicolon and leaking the block's '}' to top-level parsing.
+        let mut block_depth = self
+            .cursor
+            .tokens
+            .get(declaration_start..self.cursor.position())
+            .unwrap_or_default()
+            .iter()
+            .fold(0usize, |depth, token| match token.kind {
+                TokenKind::LBrace => depth + 1,
+                TokenKind::RBrace => depth.saturating_sub(1),
+                _ => depth,
+            });
+
+        if block_depth > 0 {
+            while let Some(token) = self.current() {
+                match token.kind {
+                    TokenKind::LBrace => {
+                        block_depth += 1;
+                        self.bump();
+                    }
+                    TokenKind::RBrace => {
+                        block_depth -= 1;
+                        self.bump();
+                        if block_depth == 0 {
+                            break;
+                        }
+                    }
+                    TokenKind::Eof => break,
+                    _ => {
+                        self.bump();
+                    }
+                }
+            }
+            return;
+        }
+
+        // Errors before entering a block still recover at a declaration-level
+        // separator. Always consume at least one token when possible.
         while let Some(token) = self.current() {
             match token.kind {
                 TokenKind::Semicolon | TokenKind::RBrace => {
