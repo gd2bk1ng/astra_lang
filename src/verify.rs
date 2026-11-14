@@ -401,12 +401,18 @@ impl<'src> SemanticVerifier<'src> {
 
     fn infer_expression(&mut self, expression: &Expression<'src>) -> ConfidenceState {
         match expression {
-            Expression::Identifier(_, _) => match self.epistemic_confidence {
-                Some(confidence) if confidence < 1.0 => {
-                    ConfidenceState::Probabilistic { confidence }
+            Expression::Identifier(name, _) => {
+                // Resolve the active epistemic binding independently of confidence.
+                // Unresolved identifiers remain compatible with existing verifier behavior.
+                let _binding = self.epistemic_environment.lookup(name);
+
+                match self.epistemic_confidence {
+                    Some(confidence) if confidence < 1.0 => {
+                        ConfidenceState::Probabilistic { confidence }
+                    }
+                    Some(_) => ConfidenceState::Deterministic,
+                    None => ConfidenceState::Unknown,
                 }
-                Some(_) => ConfidenceState::Deterministic,
-                None => ConfidenceState::Unknown,
             },
             Expression::Literal(_, _) => ConfidenceState::Deterministic,
             Expression::Call {
