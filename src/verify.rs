@@ -11,11 +11,13 @@
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
+use crate::epistemic::{EpistemicBinding, EpistemicEnvironment, EpistemicState};
 use crate::tokens::Span;
 use std::collections::{BTreeMap, BTreeSet};
 
 const CODE_EPISTEMIC_RANGE: &str = "SYN2001";
 const CODE_EPISTEMIC_GATE: &str = "SYN2002";
+const CODE_EPISTEMIC_BINDING_DUPLICATE: &str = "SYN2003";
 const CODE_EFFECT_DUPLICATE: &str = "SYN2101";
 const CODE_EFFECT_REQUIRED: &str = "SYN2102";
 const CODE_CAPABILITY_LEAK: &str = "SYN2103";
@@ -129,6 +131,7 @@ pub struct SemanticVerifier<'src> {
     diagnostics: Vec<Diagnostic<'src>>,
     declared_effects: BTreeSet<&'src str>,
     epistemic_confidence: Option<f64>,
+    epistemic_environment: EpistemicEnvironment<'src>,
 }
 
 impl<'src> SemanticVerifier<'src> {
@@ -138,6 +141,7 @@ impl<'src> SemanticVerifier<'src> {
             diagnostics: Vec::new(),
             declared_effects: BTreeSet::new(),
             epistemic_confidence: None,
+            epistemic_environment: EpistemicEnvironment::new(),
         }
     }
 
@@ -162,13 +166,47 @@ impl<'src> SemanticVerifier<'src> {
     fn verify_function(&mut self, function: &Function<'src>) {
         self.declared_effects.clear();
         self.epistemic_confidence = None;
+        self.epistemic_environment = EpistemicEnvironment::new();
+        for parameter in &function.params {
+            self.register_parameter(parameter);
+        }
         self.verify_block(&function.body);
+        self.epistemic_environment = EpistemicEnvironment::new();
     }
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
         self.declared_effects.clear();
         self.epistemic_confidence = None;
+        self.epistemic_environment = EpistemicEnvironment::new();
+        for parameter in &rule.params {
+            self.register_parameter(parameter);
+        }
         self.verify_block(&rule.body);
+        self.epistemic_environment = EpistemicEnvironment::new();
+    }
+
+    fn register_parameter(&mut self, parameter: &Parameter<'src>) {
+        let binding = EpistemicBinding::new(
+            parameter.name,
+            parameter.ty.name,
+            EpistemicState::Uncertain,
+            parameter.span,
+        );
+
+        if self
+            .epistemic_environment
+            .declare(parameter.name, binding)
+            .is_err()
+        {
+            self.error(
+                CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!(
+                    "parameter '{}' is already declared in this function or rule scope",
+                    parameter.name
+                ),
+                parameter.span,
+            );
+        }
     }
 
     fn verify_intent(&mut self, intent: &Intent<'src>) {
