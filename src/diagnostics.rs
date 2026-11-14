@@ -165,7 +165,6 @@ mod tests {
     use super::*;
     use crate::{Lexer, Parser};
 
-
     fn malformed_diagnostic<'a>(source: &'a str, start: usize, end: usize) -> Diagnostic<'a> {
         DiagnosticEngine::semantic_error(
             source,
@@ -204,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_start_retires_to_preceding_character_boundary_for_rendering() {
+    fn invalid_utf8_start_retreats_to_preceding_character_boundary_for_rendering() {
         let source = "aé🙂\nnext";
         let diagnostic = malformed_diagnostic(source, 2, 4);
 
@@ -221,7 +220,7 @@ mod tests {
         let rendered = diagnostic.render();
 
         assert!(rendered.contains(" --> 7:13 (bytes 13..999)"));
-        assert!(rendered.ends_with("  | ^"));
+        assert!(rendered.ends_with("  |   ^"));
         assert_eq!(diagnostic.span.start, 13);
         assert_eq!(diagnostic.span.end, 999);
     }
