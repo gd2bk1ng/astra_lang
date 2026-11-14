@@ -1,14 +1,13 @@
 //! Foundational epistemic semantics for SyntraLang.
 //!
-//! P2 introduces explicit epistemic states, a type wrapper that keeps the
-//! underlying type separate from its epistemic status, and a lexically scoped
-//! environment. Scope-local declarations and state refinements are discarded
-//! together when a scope exits.
+//! P2 models epistemic state separately from ordinary value types, tracks
+//! bindings in lexical scopes, and requires explicit transition contracts
+//! before a binding may change epistemic state.
 
 use crate::tokens::Span;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EpistemicState {
     Observed,
     Inferred,
@@ -30,11 +29,38 @@ impl<'src> EpistemicType<'src> {
     }
 }
 
+/// An explicit allow-list for epistemic state transitions.
+///
+/// A transition is permitted only when its current state appears in
+/// `allowed_from` and its requested state appears in `allowed_to`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpistemicTransitionContract {
+    pub allowed_from: Vec<EpistemicState>,
+    pub allowed_to: Vec<EpistemicState>,
+}
+
+impl EpistemicTransitionContract {
+    pub fn new(
+        allowed_from: impl IntoIterator<Item = EpistemicState>,
+        allowed_to: impl IntoIterator<Item = EpistemicState>,
+    ) -> Self {
+        Self {
+            allowed_from: allowed_from.into_iter().collect(),
+            allowed_to: allowed_to.into_iter().collect(),
+        }
+    }
+
+    fn permits(&self, from: EpistemicState, to: EpistemicState) -> bool {
+        self.allowed_from.contains(&from) && self.allowed_to.contains(&to)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContractMetadata<'src> {
     pub name: Option<&'src str>,
     pub requires: Vec<&'src str>,
     pub guarantees: Vec<&'src str>,
+    pub transition: Option<EpistemicTransitionContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +83,18 @@ impl<'src> EpistemicBinding<'src> {
         }
     }
 
-    fn update_state(&mut self, state: EpistemicState) {
+    fn update_state_unchecked(&mut self, state: EpistemicState) {
         self.epistemic_state = state;
         self.ty.state = state;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpistemicTransitionError {
+    BindingNotFound,
+    ContractNotDefined,
+    SourceStateNotAllowed,
+    TargetStateNotAllowed,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -111,38 +145,88 @@ impl<'src> EpistemicEnvironment<'src> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
 
+    /// Attach or replace the transition contract visible to this scope.
+    ///
+    /// Inherited bindings are copied into the current scope before mutation,
+    /// so contract changes cannot leak into an enclosing scope.
+    pub fn set_transition_contract(
+        &mut self,
+        name: &'src str,
+        contract: EpistemicTransitionContract,
+    ) -> Result<(), EpistemicTransitionError> {
+        let binding = self.binding_mut_in_current_scope(name)?;
+        binding.contract.transition = Some(contract);
+        Ok(())
+    }
+
+    /// Check and apply a state transition atomically.
+    ///
+    /// No state is changed when the binding has no contract or when either
+    /// endpoint is not admitted by the contract.
+    pub fn transition_state(
+        &mut self,
+        name: &'src str,
+        new_state: EpistemicState,
+    ) -> Result<(), EpistemicTransitionError> {
+        let binding = self.binding_mut_in_current_scope(name)?;
+        let contract = binding
+            .contract
+            .transition
+            .as_ref()
+            .ok_or(EpistemicTransitionError::ContractNotDefined)?;
+        let old_state = binding.epistemic_state;
+
+        if !contract.allowed_from.contains(&old_state) {
+            return Err(EpistemicTransitionError::SourceStateNotAllowed);
+        }
+        if !contract.allowed_to.contains(&new_state) {
+            return Err(EpistemicTransitionError::TargetStateNotAllowed);
+        }
+
+        binding.update_state_unchecked(new_state);
+        Ok(())
+    }
+
+    /// Compatibility spelling for callers that previously used update_state.
+    /// It now enforces the same explicit transition contract as transition_state.
     pub fn update_state(
         &mut self,
         name: &'src str,
         new_state: EpistemicState,
-    ) -> Result<(), String> {
-        if let Some(binding) = self
+    ) -> Result<(), EpistemicTransitionError> {
+        self.transition_state(name, new_state)
+    }
+
+    fn binding_mut_in_current_scope(
+        &mut self,
+        name: &'src str,
+    ) -> Result<&mut EpistemicBinding<'src>, EpistemicTransitionError> {
+        let current = self
+            .scopes
+            .last_mut()
+            .expect("EpistemicEnvironment always contains a root scope");
+
+        if !current.contains_key(name) {
+            let inherited = self
+                .scopes
+                .iter()
+                .rev()
+                .skip(1)
+                .find_map(|scope| scope.get(name))
+                .cloned();
+
+            if let Some(binding) = inherited {
+                current.insert(name, binding);
+            } else {
+                return Err(EpistemicTransitionError::BindingNotFound);
+            }
+        }
+
+        Ok(self
             .scopes
             .last_mut()
             .expect("EpistemicEnvironment always contains a root scope")
             .get_mut(name)
-        {
-            binding.update_state(new_state);
-            return Ok(());
-        }
-
-        let inherited = self
-            .scopes
-            .iter()
-            .rev()
-            .skip(1)
-            .find_map(|scope| scope.get(name))
-            .cloned();
-
-        let Some(mut binding) = inherited else {
-            return Err(format!("binding '{name}' is not declared in the current scope"));
-        };
-
-        binding.update_state(new_state);
-        self.scopes
-            .last_mut()
-            .expect("EpistemicEnvironment always contains a root scope")
-            .insert(name, binding);
-        Ok(())
+            .expect("binding was inserted or already existed"))
     }
 }
