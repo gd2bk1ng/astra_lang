@@ -114,6 +114,11 @@ impl<'src> EpistemicEnvironment<'src> {
         Self { scopes: vec![HashMap::new()] }
     }
 
+    /// Temporary diagnostic accessor for verifier scope tracing.
+    pub(crate) fn scope_depth(&self) -> usize {
+        self.scopes.len()
+    }
+
     pub fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
