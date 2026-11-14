@@ -303,3 +303,75 @@ fn unresolved_identifiers_remain_compatible_with_existing_semantics() {
     );
 }
 
+#[test]
+fn type_compatibility_rejects_non_boolean_logical_operands() {
+    let source = "fn sample() { return true && 1; }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2301")
+        .expect("logical operand mismatch must be diagnosed");
+
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "true && 1");
+    assert!(diagnostic.message.contains("Boolean"));
+    assert!(diagnostic.message.contains("Integer"));
+}
+
+#[test]
+fn type_compatibility_rejects_non_numeric_relational_operands() {
+    let source = "fn sample() { return 1 < \"text\"; }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "relational comparison with a string must be rejected: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn type_compatibility_allows_numeric_promotion_and_cross_type_equality() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let sum = 1 + 2.5;\n",
+        "  let equal = 1 == 1.0;\n",
+        "  let ordered = 1.0 >= 1;\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "numeric promotion and cross-type equality should pass: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn type_compatibility_suppresses_cascades_for_unknown_operands() {
+    let source = "fn sample() { return unresolved && 1; }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "unknown operands must suppress compatibility cascades: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn type_compatibility_checks_unary_not_and_negation() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let invalid_not = !1;\n",
+        "  let invalid_negate = -true;\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert_eq!(
+        report.diagnostics.iter().filter(|diagnostic| diagnostic.code == "SYN2301").count(),
+        2
+    );
+}
