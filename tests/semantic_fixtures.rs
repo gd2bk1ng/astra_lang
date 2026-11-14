@@ -212,7 +212,7 @@ fn parser_nests_backtrack_local_inside_backtrack_body() {
         "fn sample() {\n",
         "  let signal = 1;\n",
         "  backtrack { let signal = signal; }\n",
-        "  let signal = 2;\n",
+        "  let result = signal;\n",
         "}\n",
     );
 
