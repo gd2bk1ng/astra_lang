@@ -92,6 +92,7 @@ impl<'src> EpistemicBinding<'src> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EpistemicTransitionError {
     BindingNotFound,
+    ScopeMutationRequiresLocalBinding,
     ContractNotDefined,
     SourceStateNotAllowed,
     TargetStateNotAllowed,
@@ -174,7 +175,18 @@ impl<'src> EpistemicEnvironment<'src> {
         name: &'src str,
         new_state: EpistemicState,
     ) -> Result<(), EpistemicTransitionError> {
-        let binding = self.binding_mut_in_current_scope(name)?;
+        let current_index = self.scopes.len() - 1;
+        if !self.scopes[current_index].contains_key(name) {
+            return if self.lookup(name).is_some() {
+                Err(EpistemicTransitionError::ScopeMutationRequiresLocalBinding)
+            } else {
+                Err(EpistemicTransitionError::BindingNotFound)
+            };
+        }
+
+        let binding = self.scopes[current_index]
+            .get_mut(name)
+            .expect("current-scope binding was checked above");
         let contract = binding
             .contract
             .transition
@@ -203,6 +215,10 @@ impl<'src> EpistemicEnvironment<'src> {
         self.transition_state(name, new_state)
     }
 
+    /// Create a local overlay when explicitly installing a scope-local contract.
+    ///
+    /// A plain state transition never calls this helper: it must target a
+    /// binding declared or explicitly refined in the current scope.
     fn binding_mut_in_current_scope(
         &mut self,
         name: &'src str,
