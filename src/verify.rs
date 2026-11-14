@@ -891,3 +891,131 @@ mod expression_type_tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod adversarial_type_propagation_tests {
+    use super::*;
+
+    fn sample_verifier() -> SemanticVerifier<'static> {
+        SemanticVerifier::new("")
+    }
+
+    fn span() -> Span {
+        Span::new(0, 0)
+    }
+
+    #[test]
+    fn adversarial_literal_and_unknown_propagation() {
+        let mut v = sample_verifier();
+
+        assert_eq!(
+            v.infer_expression_type(&Expression::Literal(Literal::Integer(10), span())),
+            SemanticType::Integer
+        );
+        assert_eq!(
+            v.infer_expression_type(&Expression::Literal(Literal::Float(3.14), span())),
+            SemanticType::Float
+        );
+        assert_eq!(
+            v.infer_expression_type(&Expression::Literal(Literal::String("test"), span())),
+            SemanticType::String
+        );
+        assert_eq!(
+            v.infer_expression_type(&Expression::Literal(Literal::Boolean(true), span())),
+            SemanticType::Boolean
+        );
+
+        assert_eq!(
+            v.infer_expression_type(&Expression::Identifier("unknown", span())),
+            SemanticType::Unknown
+        );
+        assert_eq!(
+            v.infer_expression_type(&Expression::Symbolic {
+                identifier: "sym",
+                span: span(),
+            }),
+            SemanticType::Unknown
+        );
+    }
+
+    #[test]
+    fn adversarial_nested_and_incompatible_arithmetic() {
+        let mut v = sample_verifier();
+
+        let mixed_add = Expression::Binary {
+            left: Box::new(Expression::Literal(Literal::Integer(1), span())),
+            operator: BinaryOp::Add,
+            right: Box::new(Expression::Literal(Literal::Float(2.5), span())),
+            span: span(),
+        };
+        assert_eq!(
+            v.infer_expression_type(&mixed_add),
+            SemanticType::Float
+        );
+
+        let incompatible = Expression::Binary {
+            left: Box::new(Expression::Literal(Literal::Integer(1), span())),
+            operator: BinaryOp::Add,
+            right: Box::new(Expression::Literal(Literal::String("text"), span())),
+            span: span(),
+        };
+        assert_eq!(
+            v.infer_expression_type(&incompatible),
+            SemanticType::Unknown
+        );
+
+        let logical_not = Expression::Unary {
+            operator: UnaryOp::Not,
+            operand: Box::new(Expression::Identifier("unknown", span())),
+            span: span(),
+        };
+        assert_eq!(
+            v.infer_expression_type(&logical_not),
+            SemanticType::Boolean
+        );
+    }
+
+    #[test]
+    fn adversarial_epistemic_independence_and_shadowing() {
+        let mut v = sample_verifier();
+
+        v.register_local_binding("x", SemanticType::Integer, span());
+        let binding = v
+            .epistemic_environment
+            .lookup("x")
+            .expect("outer binding is registered");
+
+        assert_eq!(binding.ty.type_name, "Integer");
+        assert_eq!(binding.ty.state, EpistemicState::Uncertain);
+        assert_eq!(binding.epistemic_state, EpistemicState::Uncertain);
+
+        v.epistemic_environment.enter_scope();
+        v.register_local_binding("x", SemanticType::Float, span());
+        assert_eq!(
+            v.epistemic_environment
+                .lookup("x")
+                .expect("inner binding is registered")
+                .ty
+                .type_name,
+            "Float"
+        );
+
+        v.epistemic_environment.exit_scope();
+        assert_eq!(
+            v.epistemic_environment
+                .lookup("x")
+                .expect("outer binding remains visible")
+                .ty
+                .type_name,
+            "Integer"
+        );
+        assert_eq!(
+            v.epistemic_environment
+                .lookup("x")
+                .expect("outer binding state remains unchanged")
+                .epistemic_state,
+            EpistemicState::Uncertain
+        );
+    }
+}
