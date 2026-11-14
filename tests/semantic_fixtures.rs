@@ -395,3 +395,139 @@ fn type_compatibility_rejects_incompatible_arithmetic_and_equality() {
         report.diagnostics
     );
 }
+
+#[test]
+fn multiline_binary_type_diagnostic_preserves_expression_origin() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  return true &&\n",
+        "    1;\n",
+        "}\n",
+    );
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2301")
+        .expect("multiline logical mismatch must be diagnosed");
+
+    assert_eq!(diagnostic.span.line, 2);
+    assert_eq!(diagnostic.span.column, 10);
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("true &&\n    1")
+    );
+    assert!(source.is_char_boundary(diagnostic.span.start));
+    assert!(source.is_char_boundary(diagnostic.span.end));
+}
+
+#[test]
+fn multiline_unary_type_diagnostic_preserves_operator_origin() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  return\n",
+        "    -true;\n",
+        "}\n",
+    );
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2301")
+        .expect("invalid unary negation must be diagnosed");
+
+    assert_eq!(diagnostic.span.line, 3);
+    assert_eq!(diagnostic.span.column, 5);
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("-true")
+    );
+}
+
+#[test]
+fn multiline_call_expression_span_preserves_callee_origin() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  return\n",
+        "    inspect(\n",
+        "      1\n",
+        "    );\n",
+        "}\n",
+    );
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+
+    let Declaration::Function(function) = &program.declarations[0] else {
+        panic!("expected function declaration");
+    };
+    let Statement::Return {
+        value: Expression::Call { span, .. },
+        ..
+    } = &function.body.statements[0]
+    else {
+        panic!("expected a call expression in the return statement");
+    };
+
+    assert_eq!(span.line, 3);
+    assert_eq!(span.column, 5);
+    assert_eq!(
+        source.get(span.start..span.end),
+        Some("inspect(\n      1\n    )")
+    );
+}
+
+#[test]
+fn unicode_before_expression_keeps_character_column_and_utf8_safe_offsets() {
+    let source = "fn sample() { let café = 1; return true && 1; }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2301")
+        .expect("logical mismatch must be diagnosed");
+
+    let line_prefix = source
+        .get(..diagnostic.span.start)
+        .expect("diagnostic start must be a UTF-8 boundary");
+    let expected_column = line_prefix.chars().count() + 1;
+
+    assert_eq!(diagnostic.span.line, 1);
+    assert_eq!(diagnostic.span.column, expected_column);
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("true && 1")
+    );
+    assert!(source.is_char_boundary(diagnostic.span.end));
+}
+
+#[test]
+fn nested_call_diagnostics_are_unique_stable_and_source_bounded() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  return inspect(\n",
+        "    true && 1\n",
+        "  );\n",
+        "}\n",
+    );
+    let first = verify(source);
+    let second = verify(source);
+
+    assert_eq!(first.diagnostics, second.diagnostics);
+    let mismatches: Vec<_> = first
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2301")
+        .collect();
+    assert_eq!(mismatches.len(), 1, "nested operator should be diagnosed once");
+
+    let span = mismatches[0].span;
+    assert!(span.start <= span.end);
+    assert!(span.end <= source.len());
+    assert!(source.is_char_boundary(span.start));
+    assert!(source.is_char_boundary(span.end));
+    assert_eq!(span.line, 3);
+    assert_eq!(span.column, 5);
+    assert_eq!(source.get(span.start..span.end), Some("true && 1"));
+}
+
