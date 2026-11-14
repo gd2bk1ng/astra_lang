@@ -268,3 +268,38 @@ fn nested_backtrack_scope_allows_local_shadowing() {
         report.diagnostics
     );
 }
+
+#[test]
+fn deeply_nested_backtrack_shadowing_restores_each_outer_binding() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let signal = 1;\n",
+        "  backtrack {\n",
+        "    let signal = signal;\n",
+        "    backtrack { let signal = signal; }\n",
+        "    let inner_result = signal;\n",
+        "  }\n",
+        "  let result = signal;\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "nested bindings must resolve without colliding or leaking: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn unresolved_identifiers_remain_compatible_with_existing_semantics() {
+    let source = "fn sample() { return unresolved_signal; }";
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "identifier lookup must not introduce unresolved-name errors: {:?}",
+        report.diagnostics
+    );
+}
+
