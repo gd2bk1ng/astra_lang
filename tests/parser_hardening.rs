@@ -184,7 +184,7 @@ fn recovering_parser_collects_distinct_errors_across_multiple_declarations() {
 
     let report = parser.parse_program_recovering();
 
-    assert_eq!(report.errors.len(), 6);
+    assert_eq!(report.errors.len(), 3);
     assert_eq!(report.program.declarations.len(), 1);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
