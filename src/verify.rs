@@ -907,14 +907,14 @@ mod adversarial_type_propagation_tests {
 
     #[test]
     fn adversarial_literal_and_unknown_propagation() {
-        let mut v = sample_verifier();
+        let v = sample_verifier();
 
         assert_eq!(
             v.infer_expression_type(&Expression::Literal(Literal::Integer(10), span())),
             SemanticType::Integer
         );
         assert_eq!(
-            v.infer_expression_type(&Expression::Literal(Literal::Float(3.14), span())),
+            v.infer_expression_type(&Expression::Literal(Literal::Float(3.142), span())),
             SemanticType::Float
         );
         assert_eq!(
@@ -941,7 +941,7 @@ mod adversarial_type_propagation_tests {
 
     #[test]
     fn adversarial_nested_and_incompatible_arithmetic() {
-        let mut v = sample_verifier();
+        let v = sample_verifier();
 
         let mixed_add = Expression::Binary {
             left: Box::new(Expression::Literal(Literal::Integer(1), span())),
