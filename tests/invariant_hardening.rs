@@ -149,14 +149,14 @@ fn catches_empty_non_empty_construct_span() {
 fn catches_nested_statement_ordering() {
     let source = "fn f() { return 1; return 2; }";
     let statements = vec![
-        Statement::Return { value: syntra_lang::Expression::Literal(Literal::Integer(1), Span::new(17, 18)), span: Span::new(10, 19) },
-        Statement::Return { value: syntra_lang::Expression::Literal(Literal::Integer(2), Span::new(27, 28)), span: Span::new(18, 29) },
+        Statement::Return { value: syntra_lang::Expression::Literal(Literal::Integer(1), Span::new(16, 17)), span: Span::new(9, 18) },
+        Statement::Return { value: syntra_lang::Expression::Literal(Literal::Integer(2), Span::new(26, 27)), span: Span::new(17, 28) },
     ];
     let function = Function {
         name: "f",
         params: vec![],
         return_type: None,
-        body: Block { statements, span: Span::new(8, 31) },
+        body: Block { statements, span: Span::new(7, 30) },
         span: Span::new(0, source.len()),
         grad: false,
     };
