@@ -207,6 +207,51 @@ fn uninitialized_local_bindings_are_registered_without_inventing_a_type() {
 }
 
 #[test]
+fn parser_nests_backtrack_local_inside_backtrack_body() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let signal = 1;\n",
+        "  backtrack { let signal = signal; }\n",
+        "  let signal = 2;\n",
+        "}\n",
+    );
+
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+
+    let Declaration::Function(function) = &program.declarations[0] else {
+        panic!("expected function declaration");
+    };
+
+    assert_eq!(function.body.statements.len(), 3);
+
+    let Statement::Backtrack { body, .. } = &function.body.statements[1] else {
+        panic!("expected backtrack statement in the outer function body");
+    };
+
+    assert_eq!(body.statements.len(), 1);
+
+    let Statement::Let {
+        name,
+        value: Some(value),
+        ..
+    } = &body.statements[0]
+    else {
+        panic!("expected inner let statement inside the backtrack body");
+    };
+
+    assert_eq!(*name, "signal");
+
+    let Expression::Identifier(inner_name, _) = value else {
+        panic!("expected inner initializer to be an identifier");
+    };
+
+    assert_eq!(*inner_name, "signal");
+}
+
+
+#[test]
 fn nested_backtrack_scope_allows_local_shadowing() {
     let source = concat!(
         "fn sample() {\n",
