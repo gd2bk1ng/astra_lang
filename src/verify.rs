@@ -914,7 +914,7 @@ mod adversarial_type_propagation_tests {
             SemanticType::Integer
         );
         assert_eq!(
-            v.infer_expression_type(&Expression::Literal(Literal::Float(3.142), span())),
+            v.infer_expression_type(&Expression::Literal(Literal::Float(123.456), span())),
             SemanticType::Float
         );
         assert_eq!(
