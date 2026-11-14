@@ -849,14 +849,18 @@ mod expression_type_tests {
     }
 
     #[test]
-    fn local_binding_registration_propagates_inferred_type() {
+    fn let_binding_registration_propagates_inferred_type() {
         let mut verifier = verifier();
+        let block = Block {
+            statements: vec![Statement::Let {
+                name: "count",
+                value: Some(Expression::Literal(Literal::Integer(7), span())),
+                span: span(),
+            }],
+            span: span(),
+        };
 
-        verifier.register_local_binding(
-            "count",
-            SemanticType::Integer,
-            span(),
-        );
+        verifier.verify_block(&block);
 
         let binding = verifier
             .epistemic_environment
