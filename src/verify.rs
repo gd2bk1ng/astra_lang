@@ -364,10 +364,16 @@ impl<'src> SemanticVerifier<'src> {
                 Statement::Let { name, value, span } => {
                     // Initializers are checked before declaration, so the new
                     // binding cannot resolve to itself during initialization.
+                    let inferred_type = value
+                        .as_ref()
+                        .map(|expression| self.infer_expression_type(expression))
+                        .unwrap_or(SemanticType::Unknown);
+
                     if let Some(value) = value {
                         let _ = self.infer_expression(value);
                     }
-                    self.register_local_binding(name, *span);
+
+                    self.register_local_binding(name, inferred_type, *span);
                 }
                 Statement::Return { value, .. }
                 | Statement::Expression { expression: value, .. } => {
@@ -387,8 +393,18 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    fn register_local_binding(&mut self, name: &'src str, span: Span) {
-        let binding = EpistemicBinding::new(name, "Unknown", EpistemicState::Uncertain, span);
+    fn register_local_binding(
+        &mut self,
+        name: &'src str,
+        inferred_type: SemanticType<'src>,
+        span: Span,
+    ) {
+        let binding = EpistemicBinding::new(
+            name,
+            semantic_type_name(&inferred_type),
+            EpistemicState::Uncertain,
+            span,
+        );
 
         if self.epistemic_environment.declare(name, binding).is_err() {
             self.error(
@@ -668,6 +684,20 @@ fn is_deterministic_gate(name: &str) -> bool {
     matches!(name, "deterministic_gate" | "control_gate" | "assert")
 }
 
+/// Translate an inferred semantic type into the epistemic binding type-name
+/// vocabulary. Complex or unsupported inferred types remain unknown.
+fn semantic_type_name(semantic_type: &SemanticType<'_>) -> &str {
+    match semantic_type {
+        SemanticType::Boolean => "Boolean",
+        SemanticType::Integer => "Integer",
+        SemanticType::Float => "Float",
+        SemanticType::String => "String",
+        SemanticType::Capability(name) => name,
+        SemanticType::Unit => "Unit",
+        SemanticType::Unknown | SemanticType::Probabilistic { .. } => "Unknown",
+    }
+}
+
 /// Translate a declared binding type into the verifier's currently supported
 /// value-type vocabulary. User-defined or unsupported names remain unknown.
 fn semantic_type_from_name(type_name: &str) -> SemanticType<'_> {
@@ -815,6 +845,45 @@ mod expression_type_tests {
         assert_eq!(
             semantic_type_from_name("CustomRecord"),
             SemanticType::Unknown
+        );
+    }
+
+    #[test]
+    fn local_binding_registration_propagates_inferred_type() {
+        let mut verifier = verifier();
+
+        verifier.register_local_binding(
+            "count",
+            SemanticType::Integer,
+            span(),
+        );
+
+        let binding = verifier
+            .epistemic_environment
+            .lookup("count")
+            .expect("local binding is registered");
+        assert_eq!(binding.ty.type_name, "Integer");
+        assert_eq!(binding.epistemic_state, EpistemicState::Uncertain);
+    }
+
+    #[test]
+    fn unsupported_local_binding_type_remains_unknown() {
+        let mut verifier = verifier();
+
+        verifier.register_local_binding(
+            "value",
+            SemanticType::Unknown,
+            span(),
+        );
+
+        assert_eq!(
+            verifier
+                .epistemic_environment
+                .lookup("value")
+                .expect("local binding is registered")
+                .ty
+                .type_name,
+            "Unknown"
         );
     }
 }
