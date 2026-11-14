@@ -460,13 +460,31 @@ fn nested_contract_replacement_restores_outer_scope_contract_after_exit() {
     );
 
     environment.exit_scope();
+    let restored_outer = environment
+        .lookup("belief")
+        .expect("outer overlay is restored");
+    assert_eq!(restored_outer.epistemic_state, EpistemicState::Known);
+    assert_eq!(restored_outer.ty.state, EpistemicState::Known);
     assert_eq!(
-        environment.lookup("belief").expect("outer overlay is restored").epistemic_state,
+        restored_outer.contract.transition,
+        Some(EpistemicTransitionContract::new(
+            [EpistemicState::Uncertain],
+            [EpistemicState::Known],
+        )),
+        "the outer scope's original transition contract must be restored"
+    );
+
+    // The restored contract is intentionally not reusable from Known:
+    // its only admitted source is Uncertain. This proves the nested
+    // replacement did not overwrite the outer contract.
+    assert_eq!(
+        environment.transition_state("belief", EpistemicState::Resolved),
+        Err(EpistemicTransitionError::SourceStateNotAllowed)
+    );
+    assert_eq!(
+        environment.lookup("belief").expect("outer overlay remains").epistemic_state,
         EpistemicState::Known
     );
-    environment
-        .transition_state("belief", EpistemicState::Known)
-        .expect("outer contract remains valid after nested exit");
 
     environment.exit_scope();
     assert_eq!(
