@@ -116,17 +116,17 @@ impl<'src> Validator<'src> {
     }
 
     fn check_sibling_order(&mut self, previous: Option<Span>, current: Span, label: &str) {
-        if let Some(previous) = previous {
-            if previous.end > current.start {
-                self.error(
-                    AstInvariantKind::SiblingOrderViolation,
-                    current,
-                    format!(
-                        "{label} overlap or reverse order: previous span {}..{} precedes current span {}..{}",
-                        previous.start, previous.end, current.start, current.end
-                    ),
-                );
-            }
+        if let Some(previous) = previous
+            && previous.end > current.start
+        {
+            self.error(
+                AstInvariantKind::SiblingOrderViolation,
+                current,
+                format!(
+                    "{label} overlap or reverse order: previous span {}..{} precedes current span {}..{}",
+                    previous.start, previous.end, current.start, current.end
+                ),
+            );
         }
     }
 
