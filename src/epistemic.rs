@@ -97,9 +97,15 @@ pub enum EpistemicTransitionError {
     TargetStateNotAllowed,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EpistemicEnvironment<'src> {
     scopes: Vec<HashMap<&'src str, EpistemicBinding<'src>>>,
+}
+
+impl<'src> Default for EpistemicEnvironment<'src> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'src> EpistemicEnvironment<'src> {
