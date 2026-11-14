@@ -201,12 +201,9 @@ impl<'src> EpistemicEnvironment<'src> {
         &mut self,
         name: &'src str,
     ) -> Result<&mut EpistemicBinding<'src>, EpistemicTransitionError> {
-        let current = self
-            .scopes
-            .last_mut()
-            .expect("EpistemicEnvironment always contains a root scope");
+        let current_index = self.scopes.len() - 1;
 
-        if !current.contains_key(name) {
+        if !self.scopes[current_index].contains_key(name) {
             let inherited = self
                 .scopes
                 .iter()
@@ -216,16 +213,13 @@ impl<'src> EpistemicEnvironment<'src> {
                 .cloned();
 
             if let Some(binding) = inherited {
-                current.insert(name, binding);
+                self.scopes[current_index].insert(name, binding);
             } else {
                 return Err(EpistemicTransitionError::BindingNotFound);
             }
         }
 
-        Ok(self
-            .scopes
-            .last_mut()
-            .expect("EpistemicEnvironment always contains a root scope")
+        Ok(self.scopes[current_index]
             .get_mut(name)
             .expect("binding was inserted or already existed"))
     }
