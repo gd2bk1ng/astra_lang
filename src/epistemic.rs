@@ -116,12 +116,12 @@ impl<'src> EpistemicEnvironment<'src> {
         name: &str,
         new_state: EpistemicState,
     ) -> Result<(), String> {
-        let current_scope = self
+        if let Some(binding) = self
             .scopes
             .last_mut()
-            .expect("EpistemicEnvironment always contains a root scope");
-
-        if let Some(binding) = current_scope.get_mut(name) {
+            .expect("EpistemicEnvironment always contains a root scope")
+            .get_mut(name)
+        {
             binding.update_state(new_state);
             return Ok(());
         }
@@ -139,7 +139,10 @@ impl<'src> EpistemicEnvironment<'src> {
         };
 
         binding.update_state(new_state);
-        current_scope.insert(name, binding);
+        self.scopes
+            .last_mut()
+            .expect("EpistemicEnvironment always contains a root scope")
+            .insert(name, binding);
         Ok(())
     }
 }

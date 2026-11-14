@@ -30,15 +30,6 @@ enum ConfidenceState {
     Unknown,
 }
 
-impl ConfidenceState {
-    fn confidence(self) -> Option<f64> {
-        match self {
-            Self::Deterministic => Some(1.0),
-            Self::Probabilistic { confidence } => Some(confidence),
-            Self::Unknown => None,
-        }
-    }
-}
 
 /// Semantic types used by the first verifier layer.
 ///
