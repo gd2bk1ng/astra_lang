@@ -3,7 +3,7 @@ use syntra_lang::{
 };
 
 fn binding(name: &'static str, state: EpistemicState) -> EpistemicBinding<'static> {
-    EpistemicBinding::new(name, "Signal", state, Span { start: 0, end: 6 })
+    EpistemicBinding::new(name, "Signal", state, Span::new(0, 6))
 }
 
 #[test]
