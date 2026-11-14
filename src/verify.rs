@@ -23,6 +23,7 @@ const CODE_EFFECT_REQUIRED: &str = "SYN2102";
 const CODE_CAPABILITY_LEAK: &str = "SYN2103";
 const CODE_GOVERNANCE_CONTRADICTION: &str = "SYN2201";
 const CODE_GOVERNANCE_EMPTY: &str = "SYN2202";
+const CODE_TYPE_MISMATCH: &str = "SYN2301";
 
 /// The semantic confidence attached to a value.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -257,13 +258,16 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
                 GoalMember::Priority { value, .. } => {
+                    self.validate_expression_types(value);
                     let _ = self.infer_expression(value);
                 }
                 GoalMember::Condition { value, span } => {
+                    self.validate_expression_types(value);
                     let state = self.infer_expression(value);
                     self.verify_deterministic_gate(state, *span);
                 }
                 GoalMember::Target { value, span } => {
+                    self.validate_expression_types(value);
                     let state = self.infer_expression(value);
                     self.verify_deterministic_gate(state, *span);
                 }
@@ -300,6 +304,7 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
                 UncertaintyMember::Evidence { value, .. } => {
+                    self.validate_expression_types(value);
                     let _ = self.infer_expression(value);
                 }
             }
@@ -327,6 +332,7 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
                 GovernanceMember::Constraint { value, span } => {
+                    self.validate_expression_types(value);
                     if let Some((name, constraint)) = self.numeric_constraint(value) {
                         let entry = constraints.entry(name).or_insert(NumericConstraint {
                             lower: None,
@@ -370,6 +376,7 @@ impl<'src> SemanticVerifier<'src> {
                         .unwrap_or(SemanticType::Unknown);
 
                     if let Some(value) = value {
+                        self.validate_expression_types(value);
                         let _ = self.infer_expression(value);
                     }
 
@@ -377,6 +384,7 @@ impl<'src> SemanticVerifier<'src> {
                 }
                 Statement::Return { value, .. }
                 | Statement::Expression { expression: value, .. } => {
+                    self.validate_expression_types(value);
                     let _ = self.infer_expression(value);
                 }
                 Statement::Backtrack { body, .. } => {
@@ -386,6 +394,7 @@ impl<'src> SemanticVerifier<'src> {
                 }
                 Statement::Annotation(annotation) => {
                     for argument in &annotation.arguments {
+                        self.validate_expression_types(argument);
                         let _ = self.infer_expression(argument);
                     }
                 }
@@ -564,6 +573,116 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
+    /// Validate operator operand compatibility without changing inferred types,
+    /// confidence, or epistemic binding state.
+    fn validate_expression_types(&mut self, expression: &Expression<'src>) {
+        match expression {
+            Expression::Unary {
+                operator,
+                operand,
+                span,
+            } => {
+                self.validate_expression_types(operand);
+                let operand_type = self.infer_expression_type(operand);
+                if operand_type == SemanticType::Unknown {
+                    return;
+                }
+
+                let compatible = match operator {
+                    UnaryOp::Negate => is_numeric_type(&operand_type),
+                    UnaryOp::Not => operand_type == SemanticType::Boolean,
+                };
+
+                if !compatible {
+                    let operator_name = match operator {
+                        UnaryOp::Negate => "-",
+                        UnaryOp::Not => "!",
+                    };
+                    self.error(
+                        CODE_TYPE_MISMATCH,
+                        format!(
+                            "operator '{operator_name}' is not compatible with operand type {operand_type:?}"
+                        ),
+                        *span,
+                    );
+                }
+            }
+            Expression::Binary {
+                left,
+                operator,
+                right,
+                span,
+            } => {
+                self.validate_expression_types(left);
+                self.validate_expression_types(right);
+
+                let left_type = self.infer_expression_type(left);
+                let right_type = self.infer_expression_type(right);
+
+                // Unknown means compatibility cannot yet be established. Do not
+                // emit a secondary diagnostic for an unresolved operand.
+                if left_type == SemanticType::Unknown || right_type == SemanticType::Unknown {
+                    return;
+                }
+
+                let compatible = match operator {
+                    BinaryOp::Add
+                    | BinaryOp::Subtract
+                    | BinaryOp::Multiply
+                    | BinaryOp::Divide => {
+                        is_numeric_type(&left_type) && is_numeric_type(&right_type)
+                    }
+                    BinaryOp::And | BinaryOp::Or => {
+                        left_type == SemanticType::Boolean
+                            && right_type == SemanticType::Boolean
+                    }
+                    BinaryOp::Equal | BinaryOp::NotEqual => {
+                        left_type == right_type
+                            || (is_numeric_type(&left_type) && is_numeric_type(&right_type))
+                    }
+                    BinaryOp::Less
+                    | BinaryOp::LessEqual
+                    | BinaryOp::Greater
+                    | BinaryOp::GreaterEqual => {
+                        is_numeric_type(&left_type) && is_numeric_type(&right_type)
+                    }
+                };
+
+                if !compatible {
+                    self.error(
+                        CODE_TYPE_MISMATCH,
+                        format!(
+                            "operator '{}' is not compatible with operand types {left_type:?} and {right_type:?}",
+                            binary_operator_name(*operator)
+                        ),
+                        *span,
+                    );
+                }
+            }
+            Expression::Call {
+                callee,
+                arguments,
+                ..
+            } => {
+                self.validate_expression_types(callee);
+                for argument in arguments {
+                    self.validate_expression_types(argument);
+                }
+            }
+            Expression::SelfModify { patch, .. } => {
+                self.validate_expression_types(patch);
+            }
+            // Expression blocks are visited by infer_expression(), which
+            // enters their lexical scope and invokes verify_block(). That
+            // block traversal performs this validation for each contained
+            // statement without duplicating scope registration or diagnostics.
+            Expression::Block(_) => {}
+            Expression::Identifier(_, _)
+            | Expression::Literal(_, _)
+            | Expression::Symbolic { .. } => {}
+        }
+    }
+
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
         let required = match operation {
             "allocate_memory" => Some("AllocateMemory"),
@@ -673,6 +792,27 @@ fn combine_epistemic(left: ConfidenceState, right: ConfidenceState) -> Confidenc
         }
         (ConfidenceState::Unknown, _) | (_, ConfidenceState::Unknown) => ConfidenceState::Unknown,
         _ => ConfidenceState::Deterministic,
+    }
+}
+
+fn is_numeric_type(semantic_type: &SemanticType<'_>) -> bool {
+    matches!(semantic_type, SemanticType::Integer | SemanticType::Float)
+}
+
+fn binary_operator_name(operator: BinaryOp) -> &'static str {
+    match operator {
+        BinaryOp::Add => "+",
+        BinaryOp::Subtract => "-",
+        BinaryOp::Multiply => "*",
+        BinaryOp::Divide => "/",
+        BinaryOp::Equal => "==",
+        BinaryOp::NotEqual => "!=",
+        BinaryOp::Less => "<",
+        BinaryOp::LessEqual => "<=",
+        BinaryOp::Greater => ">",
+        BinaryOp::GreaterEqual => ">=",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
     }
 }
 
