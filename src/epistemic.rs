@@ -116,12 +116,30 @@ impl<'src> EpistemicEnvironment<'src> {
         name: &str,
         new_state: EpistemicState,
     ) -> Result<(), String> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(binding) = scope.get_mut(name) {
-                binding.update_state(new_state);
-                return Ok(());
-            }
+        let current_scope = self
+            .scopes
+            .last_mut()
+            .expect("EpistemicEnvironment always contains a root scope");
+
+        if let Some(binding) = current_scope.get_mut(name) {
+            binding.update_state(new_state);
+            return Ok(());
         }
-        Err(format!("binding '{name}' is not declared in the current scope"))
+
+        let inherited = self
+            .scopes
+            .iter()
+            .rev()
+            .skip(1)
+            .find_map(|scope| scope.get(name))
+            .cloned();
+
+        let Some(mut binding) = inherited else {
+            return Err(format!("binding '{name}' is not declared in the current scope"));
+        };
+
+        binding.update_state(new_state);
+        current_scope.insert(name, binding);
+        Ok(())
     }
 }
