@@ -23,7 +23,7 @@ fn valid_epistemic_resolution_and_declared_effects_pass() {
         "  goal deploy {\n",
         "    description \"controlled deployment\"\n",
         "    condition assert_confidence(signal)\n",
-        "    target dispatch_network_command(signal)\n",
+        "    target dispatch_network_command(resolve(signal))\n",
         "  }\n",
         "}\n",
     );
@@ -118,7 +118,7 @@ fn contradictory_governance_constraints_are_rejected() {
 
     assert_eq!(
         &source[diagnostic.span.start..diagnostic.span.end],
-        "risk <= 0.8"
+        "constraint risk <= 0.8"
     );
 }
 
