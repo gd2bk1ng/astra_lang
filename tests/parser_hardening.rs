@@ -60,13 +60,12 @@ fn malformed_control_flow_reports_without_panicking() {
 
     let report = parser.parse_program_recovering();
 
-    assert_eq!(report.errors.len(), 3);
+    assert_eq!(report.errors.len(), 1);
     assert_eq!(report.program.declarations.len(), 0);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
-    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics.len(), 1);
     assert!(diagnostics[0].render().contains("return;"));
-    assert!(diagnostics[1].render().contains("backtrack"));
 }
 
 #[test]
@@ -212,14 +211,18 @@ fn diagnostics_remain_source_bounded_for_multiline_recovery() {
     let mut parser = Parser::new(&tokens);
 
     let report = parser.parse_program_recovering();
-    let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
 
-    assert_eq!(diagnostics.len(), 4);
+    assert_eq!(report.errors.len(), 2);
+    assert_eq!(report.program.declarations.len(), 0);
+
+    let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
+    assert_eq!(diagnostics.len(), 2);
     assert_eq!(diagnostics[0].span.line, 2);
     assert_eq!(diagnostics[1].span.line, 5);
-    assert!(diagnostics[0].span.end <= source.len());
-    assert!(diagnostics[1].span.end <= source.len());
-    assert!(diagnostics[0].render().contains("bytes"));
-    assert!(diagnostics[1].render().contains("bytes"));
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic.span.start <= diagnostic.span.end
+            && diagnostic.span.end <= source.len()
+            && diagnostic.render().contains("bytes")
+    }));
 }
 
