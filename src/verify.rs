@@ -374,8 +374,20 @@ impl<'src> SemanticVerifier<'src> {
                     let _ = self.infer_expression(value);
                 }
                 Statement::Backtrack { body, .. } => {
+                    eprintln!(
+                        "[scope] before backtrack: depth={}",
+                        self.epistemic_environment.scope_depth()
+                    );
                     self.epistemic_environment.enter_scope();
+                    eprintln!(
+                        "[scope] after enter: depth={}",
+                        self.epistemic_environment.scope_depth()
+                    );
                     self.verify_block(body);
+                    eprintln!(
+                        "[scope] before exit: depth={}",
+                        self.epistemic_environment.scope_depth()
+                    );
                     self.epistemic_environment.exit_scope();
                 }
                 Statement::Annotation(annotation) => {
@@ -388,6 +400,10 @@ impl<'src> SemanticVerifier<'src> {
     }
 
     fn register_local_binding(&mut self, name: &'src str, span: Span) {
+        eprintln!(
+            "[scope] registering '{name}': depth={}",
+            self.epistemic_environment.scope_depth()
+        );
         let binding = EpistemicBinding::new(name, "Unknown", EpistemicState::Uncertain, span);
 
         if self.epistemic_environment.declare(name, binding).is_err() {
