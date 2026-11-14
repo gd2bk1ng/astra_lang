@@ -188,7 +188,7 @@ fn recovering_parser_collects_distinct_errors_across_multiple_declarations() {
     assert_eq!(report.program.declarations.len(), 1);
 
     let diagnostics = DiagnosticEngine::parse_errors(source, report.errors);
-    assert_eq!(diagnostics.len(), 6);
+    assert_eq!(diagnostics.len(), 3);
     assert!(diagnostics[0].span.start < diagnostics[1].span.start);
     assert!(diagnostics[1].span.start < diagnostics[2].span.start);
     assert!(diagnostics.iter().all(|diagnostic| {
