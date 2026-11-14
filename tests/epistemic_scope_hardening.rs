@@ -333,3 +333,231 @@ fn missing_bindings_and_duplicate_current_scope_declarations_are_rejected() {
         .declare("signal", binding("signal", EpistemicState::Known))
         .expect("shadowing in a distinct scope is allowed");
 }
+
+
+#[test]
+fn root_scope_exit_is_a_no_op_and_environment_remains_usable() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("root", binding("root", EpistemicState::Observed))
+        .expect("root declaration succeeds");
+
+    for _ in 0..8 {
+        environment.exit_scope();
+    }
+
+    assert_eq!(
+        environment.lookup("root").expect("root survives exit attempts").epistemic_state,
+        EpistemicState::Observed
+    );
+    environment
+        .declare("still_root", binding("still_root", EpistemicState::Known))
+        .expect("root remains usable");
+}
+
+#[test]
+fn deeply_nested_shadowing_restores_each_parent_in_reverse_order() {
+    const DEPTH: usize = 128;
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("root declaration succeeds");
+
+    let states = [
+        EpistemicState::Observed,
+        EpistemicState::Inferred,
+        EpistemicState::Assumed,
+        EpistemicState::Uncertain,
+        EpistemicState::Resolved,
+        EpistemicState::Known,
+    ];
+
+    for depth in 0..DEPTH {
+        environment.enter_scope();
+        let state = states[depth % states.len()];
+        environment
+            .declare("signal", binding("signal", state))
+            .expect("each nested scope may shadow its parent");
+        assert_eq!(
+            environment.lookup("signal").expect("innermost binding exists").epistemic_state,
+            state
+        );
+    }
+
+    for depth in (0..DEPTH).rev() {
+        environment.exit_scope();
+        let expected = if depth == 0 {
+            EpistemicState::Observed
+        } else {
+            states[(depth - 1) % states.len()]
+        };
+        assert_eq!(
+            environment.lookup("signal").expect("parent binding is restored").epistemic_state,
+            expected
+        );
+    }
+}
+
+#[test]
+fn repeated_scope_reentry_does_not_retain_stale_local_contracts() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("root declaration succeeds");
+
+    for _ in 0..64 {
+        environment.enter_scope();
+        environment
+            .set_transition_contract("signal", observed_to_resolved())
+            .expect("scope-local contract installs");
+        environment
+            .transition_state("signal", EpistemicState::Resolved)
+            .expect("local transition succeeds");
+        environment.exit_scope();
+
+        let parent = environment.lookup("signal").expect("parent binding remains");
+        assert_eq!(parent.epistemic_state, EpistemicState::Observed);
+        assert_eq!(parent.ty.state, EpistemicState::Observed);
+        assert!(parent.contract.transition.is_none());
+    }
+}
+
+#[test]
+fn nested_contract_replacement_restores_outer_scope_contract_after_exit() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("belief", binding("belief", EpistemicState::Uncertain))
+        .expect("root declaration succeeds");
+
+    let outer_contract = EpistemicTransitionContract::new(
+        [EpistemicState::Uncertain],
+        [EpistemicState::Known],
+    );
+    environment.enter_scope();
+    environment
+        .set_transition_contract("belief", outer_contract)
+        .expect("outer local contract installs");
+    environment
+        .transition_state("belief", EpistemicState::Known)
+        .expect("outer local transition succeeds");
+
+    environment.enter_scope();
+    environment
+        .set_transition_contract(
+            "belief",
+            EpistemicTransitionContract::new(
+                [EpistemicState::Known],
+                [EpistemicState::Resolved],
+            ),
+        )
+        .expect("nested contract replaces only the nested overlay");
+    environment
+        .transition_state("belief", EpistemicState::Resolved)
+        .expect("nested transition succeeds");
+    assert_eq!(
+        environment.lookup("belief").expect("nested overlay is visible").epistemic_state,
+        EpistemicState::Resolved
+    );
+
+    environment.exit_scope();
+    assert_eq!(
+        environment.lookup("belief").expect("outer overlay is restored").epistemic_state,
+        EpistemicState::Known
+    );
+    environment
+        .transition_state("belief", EpistemicState::Known)
+        .expect("outer contract remains valid after nested exit");
+
+    environment.exit_scope();
+    assert_eq!(
+        environment.lookup("belief").expect("root binding is restored").epistemic_state,
+        EpistemicState::Uncertain
+    );
+    assert!(environment
+        .lookup("belief")
+        .expect("root binding remains")
+        .contract
+        .transition
+        .is_none());
+}
+
+#[test]
+fn empty_transition_contract_rejects_every_transition_without_state_drift() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("declaration succeeds");
+    environment
+        .set_transition_contract(
+            "signal",
+            EpistemicTransitionContract::new([], []),
+        )
+        .expect("empty contract is representable");
+
+    assert_eq!(
+        environment.transition_state("signal", EpistemicState::Resolved),
+        Err(EpistemicTransitionError::SourceStateNotAllowed)
+    );
+    let current = environment.lookup("signal").expect("binding remains");
+    assert_eq!(current.epistemic_state, EpistemicState::Observed);
+    assert_eq!(current.ty.state, EpistemicState::Observed);
+}
+
+#[test]
+fn duplicate_contract_entries_do_not_change_transition_semantics() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("declaration succeeds");
+    environment
+        .set_transition_contract(
+            "signal",
+            EpistemicTransitionContract::new(
+                [
+                    EpistemicState::Observed,
+                    EpistemicState::Observed,
+                ],
+                [
+                    EpistemicState::Resolved,
+                    EpistemicState::Resolved,
+                ],
+            ),
+        )
+        .expect("duplicate entries are accepted as redundant metadata");
+    environment
+        .transition_state("signal", EpistemicState::Resolved)
+        .expect("duplicate allow-list entries still permit the transition");
+
+    let current = environment.lookup("signal").expect("binding remains");
+    assert_eq!(current.epistemic_state, EpistemicState::Resolved);
+    assert_eq!(current.ty.state, EpistemicState::Resolved);
+}
+
+#[test]
+fn rejected_transitions_never_diverge_binding_and_type_states() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("declaration succeeds");
+    environment
+        .set_transition_contract(
+            "signal",
+            EpistemicTransitionContract::new(
+                [EpistemicState::Observed],
+                [EpistemicState::Known],
+            ),
+        )
+        .expect("contract installs");
+
+    for attempted_state in [
+        EpistemicState::Resolved,
+        EpistemicState::Inferred,
+        EpistemicState::Assumed,
+        EpistemicState::Uncertain,
+    ] {
+        assert!(environment.transition_state("signal", attempted_state).is_err());
+        let current = environment.lookup("signal").expect("binding remains");
+        assert_eq!(current.epistemic_state, current.ty.state);
+        assert_eq!(current.epistemic_state, EpistemicState::Observed);
+    }
+}
