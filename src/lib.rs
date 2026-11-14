@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod diagnostics;
+pub mod epistemic;
 pub mod invariants;
 pub mod lexer;
 pub mod parser;
@@ -17,12 +18,13 @@ pub mod verify;
 // a second owned token representation.
 
 pub use ast::*;
+pub use epistemic::*;
 pub use invariants::*;
 pub use lexer::{LexError, Lexer};
 pub use diagnostics::{Diagnostic, DiagnosticEngine, DiagnosticSeverity};
 pub use parser::{ParseError, ParseReport, Parser, TokenCursor};
 pub use tokens::{Span, Token, TokenKind};
 pub use verify::{
-    Capability, CapabilityError, CapabilityLedger, EpistemicState, SemanticReport,
+    Capability, CapabilityError, CapabilityLedger, SemanticReport,
     SemanticType, SemanticVerifier,
 };
