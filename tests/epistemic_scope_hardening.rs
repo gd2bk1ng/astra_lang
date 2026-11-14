@@ -15,6 +15,15 @@ fn observed_to_resolved() -> EpistemicTransitionContract {
 }
 
 #[test]
+fn default_environment_starts_with_a_usable_root_scope() {
+    let mut environment = EpistemicEnvironment::default();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("default environment has a root scope");
+    assert!(environment.lookup("signal").is_some());
+}
+
+#[test]
 fn basic_binding_and_contract_checked_state_tracking() {
     let mut environment = EpistemicEnvironment::new();
 
