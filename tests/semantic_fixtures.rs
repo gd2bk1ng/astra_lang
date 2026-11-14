@@ -257,7 +257,7 @@ fn nested_backtrack_scope_allows_local_shadowing() {
         "fn sample() {\n",
         "  let signal = 1;\n",
         "  backtrack { let signal = signal; }\n",
-        "  let signal = 2;\n",
+        "  let result = signal;\n",
         "}\n",
     );
     let report = verify(source);
