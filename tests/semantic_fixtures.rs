@@ -1,5 +1,5 @@
 use syntra_lang::{
-    Declaration, DiagnosticEngine, Lexer, Parser, SemanticVerifier,
+    Declaration, DiagnosticEngine, Expression, Lexer, Parser, SemanticVerifier, Statement,
 };
 
 fn verify(source: &str) -> syntra_lang::SemanticReport<'_> {
