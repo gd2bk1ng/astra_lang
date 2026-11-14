@@ -79,6 +79,45 @@ fn lexical_scope_nesting_and_shadowing_are_isolated() {
 }
 
 #[test]
+fn parent_lookup_does_not_block_local_shadow_declaration() {
+    let mut environment = EpistemicEnvironment::new();
+
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("outer declaration succeeds");
+
+    environment.enter_scope();
+    assert_eq!(
+        environment
+            .lookup("signal")
+            .expect("parent binding is visible from the child scope")
+            .epistemic_state,
+        EpistemicState::Observed
+    );
+
+    environment
+        .declare("signal", binding("signal", EpistemicState::Uncertain))
+        .expect("visible parent binding must not block a local shadow declaration");
+
+    assert_eq!(
+        environment
+            .lookup("signal")
+            .expect("local shadow is visible")
+            .epistemic_state,
+        EpistemicState::Uncertain
+    );
+
+    environment.exit_scope();
+    assert_eq!(
+        environment
+            .lookup("signal")
+            .expect("outer binding is restored")
+            .epistemic_state,
+        EpistemicState::Observed
+    );
+}
+
+#[test]
 fn scope_exit_discards_inner_bindings_and_local_contract_refinements() {
     let mut environment = EpistemicEnvironment::new();
 
