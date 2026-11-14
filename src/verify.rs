@@ -686,7 +686,7 @@ fn is_deterministic_gate(name: &str) -> bool {
 
 /// Translate an inferred semantic type into the epistemic binding type-name
 /// vocabulary. Complex or unsupported inferred types remain unknown.
-fn semantic_type_name(semantic_type: &SemanticType<'_>) -> &str {
+fn semantic_type_name<'src>(semantic_type: &SemanticType<'src>) -> &'src str {
     match semantic_type {
         SemanticType::Boolean => "Boolean",
         SemanticType::Integer => "Integer",
