@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(diagnostic.source_line(), "aé🙂");
         let rendered = diagnostic.render();
         assert!(rendered.contains(" --> 7:13 (bytes 2..4)"));
-        assert!(rendered.contains("  | ^"));
+        assert!(rendered.contains("  |  ^"));
     }
 
     #[test]
