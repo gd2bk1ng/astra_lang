@@ -174,3 +174,52 @@ fn verifier_preserves_borrowed_ast_source_provenance() {
     assert!(report.is_success());
     assert_eq!(&source[intent.span.start..intent.span.end], source);
 }
+
+
+#[test]
+fn duplicate_local_bindings_are_rejected_with_the_declaration_span() {
+    let source = "fn sample() { let signal = 1; let signal = 2; }";
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2003")
+        .expect("duplicate local binding must be diagnosed");
+
+    assert_eq!(
+        &source[diagnostic.span.start..diagnostic.span.end],
+        "let signal = 2;"
+    );
+    assert!(diagnostic.message.contains("signal"));
+}
+
+#[test]
+fn uninitialized_local_bindings_are_registered_without_inventing_a_type() {
+    let source = "fn sample() { let signal; return signal; }";
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "unexpected semantic diagnostics: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn nested_backtrack_scope_allows_local_shadowing() {
+    let source = concat!(
+        "fn sample() {\n",
+        "  let signal = 1;\n",
+        "  backtrack { let signal = signal; }\n",
+        "  let signal = 2;\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "nested scope must not collide with or leak into its parent: {:?}",
+        report.diagnostics
+    );
+}
