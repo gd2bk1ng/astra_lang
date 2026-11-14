@@ -657,7 +657,9 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         while let Some((op, precedence)) = self.binary_operator() {
             if precedence < min { break; }
             self.bump(); let right = self.parse_binary(precedence + 1)?;
-            let span = Span::with_pos(left.span().start, right.span().end, 1, 1);
+            let left_span = left.span();
+            let right_span = right.span();
+            let span = span_from_origin(left_span, right_span.end);
             left = Expression::Binary { left: Box::new(left), operator: op, right: Box::new(right), span };
         }
         Ok(left)
@@ -665,7 +667,17 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
 
     fn parse_unary(&mut self) -> Result<Expression<'src>, ParseError<'src>> {
         let op = match self.current().map(|t| t.kind) { Some(TokenKind::Minus) => Some(UnaryOp::Negate), Some(TokenKind::Bang) => Some(UnaryOp::Not), _ => None };
-        if let Some(operator) = op { let start = self.current_span().unwrap().start; self.bump(); let operand = self.parse_unary()?; let span = Span::with_pos(start, operand.span().end, 1, 1); return Ok(Expression::Unary { operator, operand: Box::new(operand), span }); }
+        if let Some(operator) = op {
+            let start_span = self.current_span().unwrap();
+            self.bump();
+            let operand = self.parse_unary()?;
+            let span = span_from_origin(start_span, operand.span().end);
+            return Ok(Expression::Unary {
+                operator,
+                operand: Box::new(operand),
+                span,
+            });
+        }
         self.parse_postfix()
     }
 
@@ -674,7 +686,8 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         while self.at(TokenKind::LParen) {
             self.bump(); let mut arguments = Vec::new();
             if !self.at(TokenKind::RParen) { loop { arguments.push(self.parse_expression()?); if self.at(TokenKind::Comma) { self.bump(); continue; } break; } }
-            let close = self.expect(TokenKind::RParen, ")")?; let span = Span::with_pos(expression.span().start, close.span.end, 1, 1);
+            let close = self.expect(TokenKind::RParen, ")")?;
+            let span = span_from_origin(expression.span(), close.span.end);
             expression = Expression::Call { callee: Box::new(expression), arguments, span };
         }
         Ok(expression)
@@ -734,6 +747,16 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     fn bump(&mut self) -> Option<&'tokens Token<'src>> { self.cursor.bump() }
 
     fn current(&self) -> Option<&'tokens Token<'src>> { self.cursor.current() }
+}
+
+
+/// Build a composite expression span from its originating token/expression.
+///
+/// Token spans already carry the lexer's 1-based line and Unicode-character
+/// column metadata. Reusing that origin preserves exact source coordinates
+/// without making the parser retain or receive the source buffer.
+fn span_from_origin(origin: Span, end: usize) -> Span {
+    Span::with_pos(origin.start, end, origin.line, origin.column)
 }
 
 trait ExpressionSpan { fn span(&self) -> Span; }
