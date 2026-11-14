@@ -148,6 +148,85 @@ fn nested_scope_transition_cannot_leak_into_parent() {
 }
 
 #[test]
+fn inherited_binding_cannot_be_transitioned_without_a_local_shadow_or_contract() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("outer declaration succeeds");
+    environment
+        .set_transition_contract("signal", observed_to_resolved())
+        .expect("outer contract installation succeeds");
+
+    environment.enter_scope();
+    assert_eq!(
+        environment.transition_state("signal", EpistemicState::Resolved),
+        Err(EpistemicTransitionError::ScopeMutationRequiresLocalBinding)
+    );
+    assert_eq!(
+        environment.lookup("signal").expect("inherited binding remains visible").epistemic_state,
+        EpistemicState::Observed
+    );
+    environment.exit_scope();
+
+    assert_eq!(
+        environment.lookup("signal").expect("parent binding remains").epistemic_state,
+        EpistemicState::Observed
+    );
+}
+
+#[test]
+fn local_contract_installation_creates_an_isolated_shadow_for_transition() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("outer declaration succeeds");
+    environment.enter_scope();
+
+    environment
+        .set_transition_contract("signal", observed_to_resolved())
+        .expect("local contract installation explicitly creates a local overlay");
+    environment
+        .transition_state("signal", EpistemicState::Resolved)
+        .expect("transition is allowed on the local overlay");
+
+    assert_eq!(
+        environment.lookup("signal").expect("local overlay is visible").epistemic_state,
+        EpistemicState::Resolved
+    );
+    environment.exit_scope();
+    assert_eq!(
+        environment.lookup("signal").expect("parent binding is restored").epistemic_state,
+        EpistemicState::Observed
+    );
+}
+
+#[test]
+fn explicit_local_shadow_declaration_allows_only_local_transition() {
+    let mut environment = EpistemicEnvironment::new();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Observed))
+        .expect("outer declaration succeeds");
+    environment.enter_scope();
+    environment
+        .declare("signal", binding("signal", EpistemicState::Uncertain))
+        .expect("explicit local shadow succeeds");
+
+    assert_eq!(
+        environment.transition_state("signal", EpistemicState::Resolved),
+        Err(EpistemicTransitionError::ContractNotDefined)
+    );
+    assert_eq!(
+        environment.lookup("signal").expect("local shadow remains").epistemic_state,
+        EpistemicState::Uncertain
+    );
+    environment.exit_scope();
+    assert_eq!(
+        environment.lookup("signal").expect("parent binding remains").epistemic_state,
+        EpistemicState::Observed
+    );
+}
+
+#[test]
 fn transition_without_contract_is_rejected_without_mutation() {
     let mut environment = EpistemicEnvironment::new();
     environment
