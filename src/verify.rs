@@ -24,14 +24,14 @@ const CODE_GOVERNANCE_EMPTY: &str = "SYN2202";
 
 /// The semantic confidence attached to a value.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EpistemicState {
+enum ConfidenceState {
     Deterministic,
     Probabilistic { confidence: f64 },
     Unknown,
 }
 
-impl EpistemicState {
-    pub fn confidence(self) -> Option<f64> {
+impl ConfidenceState {
+    fn confidence(self) -> Option<f64> {
         match self {
             Self::Deterministic => Some(1.0),
             Self::Probabilistic { confidence } => Some(confidence),
@@ -351,16 +351,16 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    fn infer_expression(&mut self, expression: &Expression<'src>) -> EpistemicState {
+    fn infer_expression(&mut self, expression: &Expression<'src>) -> ConfidenceState {
         match expression {
             Expression::Identifier(_, _) => match self.epistemic_confidence {
                 Some(confidence) if confidence < 1.0 => {
-                    EpistemicState::Probabilistic { confidence }
+                    ConfidenceState::Probabilistic { confidence }
                 }
-                Some(_) => EpistemicState::Deterministic,
-                None => EpistemicState::Unknown,
+                Some(_) => ConfidenceState::Deterministic,
+                None => ConfidenceState::Unknown,
             },
-            Expression::Literal(_, _) => EpistemicState::Deterministic,
+            Expression::Literal(_, _) => ConfidenceState::Deterministic,
             Expression::Call {
                 callee,
                 arguments,
@@ -384,11 +384,11 @@ impl<'src> SemanticVerifier<'src> {
                     self.verify_effect_for_operation(name, *span);
 
                     if is_resolution_operation(name) {
-                        return EpistemicState::Deterministic;
+                        return ConfidenceState::Deterministic;
                     }
 
                     if is_deterministic_gate(name) {
-                        if let Some(EpistemicState::Probabilistic { confidence }) = argument_state
+                        if let Some(ConfidenceState::Probabilistic { confidence }) = argument_state
                             && confidence < 1.0
                         {
                             self.error(
@@ -399,11 +399,11 @@ impl<'src> SemanticVerifier<'src> {
                                 *span,
                             );
                         }
-                        return EpistemicState::Deterministic;
+                        return ConfidenceState::Deterministic;
                     }
                 }
 
-                argument_state.unwrap_or(EpistemicState::Unknown)
+                argument_state.unwrap_or(ConfidenceState::Unknown)
             }
             Expression::Unary { operand, .. } => self.infer_expression(operand),
             Expression::Binary { left, right, .. } => {
@@ -413,9 +413,9 @@ impl<'src> SemanticVerifier<'src> {
             }
             Expression::Block(block) => {
                 self.verify_block(block);
-                EpistemicState::Unknown
+                ConfidenceState::Unknown
             }
-            Expression::Symbolic { .. } => EpistemicState::Unknown,
+            Expression::Symbolic { .. } => ConfidenceState::Unknown,
             Expression::SelfModify { target, patch, span } => {
                 let _ = self.infer_expression(patch);
                 self.verify_effect_for_operation("SelfModify", *span);
@@ -426,7 +426,7 @@ impl<'src> SemanticVerifier<'src> {
                         *span,
                     );
                 }
-                EpistemicState::Unknown
+                ConfidenceState::Unknown
             }
         }
     }
@@ -457,8 +457,8 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    fn verify_deterministic_gate(&mut self, state: EpistemicState, span: Span) {
-        if let EpistemicState::Probabilistic { confidence } = state
+    fn verify_deterministic_gate(&mut self, state: ConfidenceState, span: Span) {
+        if let ConfidenceState::Probabilistic { confidence } = state
             && confidence < 1.0
         {
             self.error(
@@ -526,20 +526,20 @@ impl<'src> SemanticVerifier<'src> {
     }
 }
 
-fn combine_epistemic(left: EpistemicState, right: EpistemicState) -> EpistemicState {
+fn combine_epistemic(left: ConfidenceState, right: ConfidenceState) -> ConfidenceState {
     match (left, right) {
         (
-            EpistemicState::Probabilistic { confidence: left },
-            EpistemicState::Probabilistic { confidence: right },
-        ) => EpistemicState::Probabilistic {
+            ConfidenceState::Probabilistic { confidence: left },
+            ConfidenceState::Probabilistic { confidence: right },
+        ) => ConfidenceState::Probabilistic {
             confidence: left.min(right),
         },
-        (EpistemicState::Probabilistic { confidence }, EpistemicState::Deterministic)
-        | (EpistemicState::Deterministic, EpistemicState::Probabilistic { confidence }) => {
-            EpistemicState::Probabilistic { confidence }
+        (ConfidenceState::Probabilistic { confidence }, ConfidenceState::Deterministic)
+        | (ConfidenceState::Deterministic, ConfidenceState::Probabilistic { confidence }) => {
+            ConfidenceState::Probabilistic { confidence }
         }
-        (EpistemicState::Unknown, _) | (_, EpistemicState::Unknown) => EpistemicState::Unknown,
-        _ => EpistemicState::Deterministic,
+        (ConfidenceState::Unknown, _) | (_, ConfidenceState::Unknown) => ConfidenceState::Unknown,
+        _ => ConfidenceState::Deterministic,
     }
 }
 
