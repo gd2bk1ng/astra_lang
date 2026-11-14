@@ -113,7 +113,7 @@ impl<'src> EpistemicEnvironment<'src> {
 
     pub fn update_state(
         &mut self,
-        name: &str,
+        name: &'src str,
         new_state: EpistemicState,
     ) -> Result<(), String> {
         if let Some(binding) = self
