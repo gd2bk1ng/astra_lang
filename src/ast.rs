@@ -8,7 +8,7 @@ pub struct Program<'a> { pub declarations: Vec<Declaration<'a>>, pub span: Span 
 pub enum Declaration<'a> { Function(Function<'a>), Intent(Intent<'a>), Rule(Rule<'a>) }
 
 #[derive(Debug, PartialEq)]
-pub struct Function<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span, pub grad: bool }
+pub struct Function<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub effects: Option<Effects<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span, pub grad: bool }
 
 #[derive(Debug, PartialEq)]
 pub struct Intent<'a> { pub name: &'a str, pub members: Vec<IntentMember<'a>>, pub span: Span }
@@ -86,7 +86,7 @@ pub enum GovernanceMember<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Rule<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span }
+pub struct Rule<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub effects: Option<Effects<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span }
 
 #[derive(Debug, PartialEq)]
 pub struct Parameter<'a> { pub name: &'a str, pub ty: TypeRef<'a>, pub span: Span }

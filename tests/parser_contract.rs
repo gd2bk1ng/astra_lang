@@ -20,6 +20,7 @@ fn parser_builds_borrowed_function_ast() {
     assert_eq!(function.params[0].name, "x");
     assert_eq!(function.params[0].ty.name, "Int");
     assert_eq!(function.params[0].ty.arguments[0].name, "64");
+    assert!(function.effects.is_none());
 
     assert!(std::ptr::eq(function.name.as_ptr(), source["fn ".len()..].as_ptr()));
 
@@ -65,4 +66,51 @@ fn parser_cursor_never_owns_token_storage() {
     assert_eq!(cursor.current().expect("first token").lexeme, "fn");
     assert_eq!(cursor.peek(1).expect("second token").lexeme, "f");
     assert_eq!(cursor.remaining().len(), tokens.len());
+}
+
+
+#[test]
+fn parser_accepts_function_effects_before_return_type() {
+    let source = "fn read_configuration(path: String) effects { ReadFile, WriteFile } -> String { return path; }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+
+    let syntra_lang::Declaration::Function(function) = &program.declarations[0] else {
+        panic!("expected function declaration");
+    };
+    let effects = function.effects.as_ref().expect("function effects parsed");
+    assert_eq!(effects.items.iter().map(|item| item.name).collect::<Vec<_>>(), ["ReadFile", "WriteFile"]);
+    assert_eq!(function.return_type.as_ref().expect("return type parsed").name, "String");
+    assert_eq!(&source[effects.span.start..effects.span.end], "effects { ReadFile, WriteFile }");
+}
+
+#[test]
+fn parser_accepts_rule_effects_without_return_type() {
+    let source = "rule synchronize() effects { DispatchNetworkCommand } { dispatch_network_command(); }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+
+    let syntra_lang::Declaration::Rule(rule) = &program.declarations[0] else {
+        panic!("expected rule declaration");
+    };
+    let effects = rule.effects.as_ref().expect("rule effects parsed");
+    assert_eq!(effects.items.len(), 1);
+    assert_eq!(effects.items[0].name, "DispatchNetworkCommand");
+    assert!(rule.return_type.is_none());
+    assert_eq!(&source[effects.span.start..effects.span.end], "effects { DispatchNetworkCommand }");
+}
+
+#[test]
+fn parser_preserves_callable_without_effect_clause() {
+    let source = "rule plain() {}";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+
+    let syntra_lang::Declaration::Rule(rule) = &program.declarations[0] else {
+        panic!("expected rule declaration");
+    };
+    assert!(rule.effects.is_none());
 }

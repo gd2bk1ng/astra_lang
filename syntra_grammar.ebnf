@@ -12,7 +12,7 @@ TopLevelDecl ::= FunctionDecl
               | Annotation
               | Statement
 
-FunctionDecl ::= [GradAnnotation] "fn" Identifier "(" [ParamList] ")" ["->" Type] Block
+FunctionDecl ::= [GradAnnotation] "fn" Identifier "(" [ParamList] ")" [EffectsClause] ["->" Type] Block
 GradAnnotation ::= "@" "grad"
 
 ParamList ::= Param { "," Param }
@@ -55,7 +55,8 @@ GovernanceMember ::= "requires" Identifier
                    | "policy" StringLiteral
                    | "constraint" Expression
 
-RuleDecl ::= "rule" Identifier "(" [ParamList] ")" ["->" Type] Block
+RuleDecl ::= "rule" Identifier "(" [ParamList] ")" [EffectsClause] ["->" Type] Block
+EffectsClause ::= "effects" "{" EffectItem { "," EffectItem } "}"
 
 Block ::= "{" { Statement } "}"
 Statement ::= Expression ";"
