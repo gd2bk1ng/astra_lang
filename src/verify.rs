@@ -601,7 +601,7 @@ impl<'src> SemanticVerifier<'src> {
             return;
         }
 
-        if !semantic_types_compatible(&expected_type, &actual_type) {
+        if !semantic_types_compatible(&expected_type, actual_type) {
             self.error(
                 CODE_RETURN_TYPE_MISMATCH,
                 format!(
@@ -887,12 +887,13 @@ impl<'src> SemanticVerifier<'src> {
                 span,
             } => {
                 let callee_validation = self.validate_expression_types(callee);
-                let mut arguments_valid = true;
+                let mut argument_types = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     let validation = self.validate_expression_types(argument);
-                    arguments_valid &= validation.is_valid;
+                    argument_types.push(validation.validated_type());
                 }
-                is_valid &= callee_validation.is_valid && arguments_valid;
+                is_valid &= callee_validation.is_valid
+                    && argument_types.iter().all(|ty| *ty != SemanticType::Unknown);
 
                 let Expression::Identifier(name, _) = callee.as_ref() else {
                     return ExpressionValidation { inferred_type, is_valid };
@@ -918,12 +919,12 @@ impl<'src> SemanticVerifier<'src> {
                     is_valid = false;
                 }
 
-                for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
-                    let actual_validation = self.validate_expression_types_for_type_only(argument);
-                    let actual_type = actual_validation;
+                for ((argument, actual_type), parameter) in
+                    arguments.iter().zip(&argument_types).zip(&signature.parameters)
+                {
                     let expected_type = semantic_type_from_name(parameter.type_name);
 
-                    if actual_type == SemanticType::Unknown
+                    if *actual_type == SemanticType::Unknown
                         || expected_type == SemanticType::Unknown
                     {
                         continue;
@@ -958,15 +959,6 @@ impl<'src> SemanticVerifier<'src> {
         }
 
         ExpressionValidation { inferred_type, is_valid }
-    }
-
-    /// Return a child's validated type without re-emitting its diagnostics.
-    /// This helper is only used after the caller has recursively validated it.
-    fn validate_expression_types_for_type_only(
-        &self,
-        expression: &Expression<'src>,
-    ) -> SemanticType<'src> {
-        self.infer_expression_type(expression)
     }
 
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
