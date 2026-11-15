@@ -83,6 +83,7 @@ fn catches_child_containment_violation() {
     let function = Function {
         name: "f",
         params: vec![],
+        effects: None,
         return_type: None,
         body,
         span: Span::new(0, 8),
@@ -103,6 +104,7 @@ fn catches_overlapping_declarations() {
     let first = Function {
         name: "a",
         params: vec![],
+        effects: None,
         return_type: None,
         body: Block { statements: vec![], span: Span::new(8, 10) },
         span: Span::new(0, 10),
@@ -111,6 +113,7 @@ fn catches_overlapping_declarations() {
     let second = Function {
         name: "b",
         params: vec![],
+        effects: None,
         return_type: None,
         body: Block { statements: vec![], span: Span::new(18, 20) },
         span: Span::new(9, 20),
@@ -131,6 +134,7 @@ fn catches_empty_non_empty_construct_span() {
     let function = Function {
         name: "f",
         params: vec![],
+        effects: None,
         return_type: None,
         body: Block { statements: vec![], span: Span::new(7, 9) },
         span: Span::new(0, 0),
@@ -155,6 +159,7 @@ fn catches_nested_statement_ordering() {
     let function = Function {
         name: "f",
         params: vec![],
+        effects: None,
         return_type: None,
         body: Block { statements, span: Span::new(8, 31) },
         span: Span::new(0, source.len()),
