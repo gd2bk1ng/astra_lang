@@ -552,8 +552,6 @@ impl<'src> SemanticVerifier<'src> {
                                 *span,
                             );
                         }
-                    } else {
-                        let _ = self.infer_expression(value);
                     }
                 }
             }
