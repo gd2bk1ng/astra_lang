@@ -954,3 +954,121 @@ fn return_contract_is_inherited_by_nested_expression_blocks() {
         Some("\"wrong\"")
     );
 }
+
+#[test]
+fn return_path_analysis_accepts_guaranteed_function_return() {
+    let source = "fn compute() -> Int { return 42; }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "a concrete callable with an explicit return must not be reported as falling through: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_path_analysis_rejects_function_fallthrough_for_concrete_types() {
+    let source = "fn compute() -> Int { let x = 1; }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2502")
+        .expect("concrete non-Unit function that falls through must be diagnosed");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("{ let x = 1; }")
+    );
+}
+
+#[test]
+fn return_path_analysis_rejects_rule_fallthrough_for_concrete_types() {
+    let source = "rule compute() -> String { let x = 1; }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "concrete non-Unit rules must satisfy the return-path contract: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_path_analysis_allows_unit_omitted_and_unknown_return_types() {
+    let sources = [
+        "fn log_msg() -> Unit { let x = 1; }",
+        "fn log_msg() { let x = 1; }",
+        "fn log_msg() -> CustomRecord { let x = 1; }",
+    ];
+
+    for source in sources {
+        let report = verify(source);
+        assert!(
+            !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+            "Unit, omitted, and unsupported return types must not require an explicit return: {source}: {:?}",
+            report.diagnostics
+        );
+    }
+}
+
+#[test]
+fn return_path_analysis_propagates_nonlocal_return_through_nested_expression_blocks() {
+    let source = "fn compute() -> Int { let x = { return 10; }; }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "a return inside a nested expression block exits the callable: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_path_analysis_treats_backtrack_conservatively_as_fallthrough() {
+    let source = "fn compute() -> Int { backtrack { return 0; } }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "a return inside Backtrack cannot guarantee that the callable returns: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_path_analysis_rejects_empty_concrete_callable_body() {
+    let source = "fn compute() -> Boolean { }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "an empty concrete non-Unit callable must be diagnosed"
+    );
+}
+
+#[test]
+fn return_path_analysis_accepts_return_after_sequential_statements() {
+    let source = "fn compute() -> Int { let value = 1; value; return value; }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "sequential statements preceding a return must not imply fallthrough: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_path_analysis_rejects_fallthrough_from_nested_expression_block() {
+    let source = "fn compute() -> Int { let value = { let inner = 1; }; }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+        "a nested expression block that falls through does not satisfy the callable return contract: {:?}",
+        report.diagnostics
+    );
+}
+
