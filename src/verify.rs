@@ -193,7 +193,9 @@ struct CallableParameter<'src> {
 struct CallableSignature<'src> {
     name: &'src str,
     parameters: Vec<CallableParameter<'src>>,
-    // Consumed by the subsequent call-site contract enforcement stage.\n    #[allow(dead_code)]\n    effects: BTreeSet<EffectId>,
+    // Consumed by the subsequent call-site contract enforcement stage.
+    #[allow(dead_code)]
+    effects: BTreeSet<EffectId>,
     return_type: Option<&'src str>,
     declaration_span: Span,
     declaration_kind: &'static str,
@@ -282,7 +284,12 @@ impl<'src> SemanticVerifier<'src> {
                 Declaration::Function(function) => {
                     let mut effects = BTreeSet::new();
                     if let Some(clause) = &function.effects {
-                        effects = Self::resolve_effect_items(self.source, &mut self.diagnostics, &clause.items, effects);
+                        effects = Self::resolve_effect_items(
+                            self.source,
+                            &mut self.diagnostics,
+                            &clause.items,
+                            effects,
+                        );
                     }
                     Some(CallableSignature {
                         name: function.name,
