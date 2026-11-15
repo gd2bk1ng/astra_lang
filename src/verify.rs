@@ -6,7 +6,8 @@
 //!
 //! The current AST does not yet encode probabilistic variable declarations or
 //! capability-token declarations. Callable effect contracts are collected in
-//! the shared registry; capability ownership remains a separate future layer.
+//! the shared registry; capability ownership is maintained here as an
+//! independent affine authority ledger foundation.
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
@@ -116,50 +117,247 @@ pub enum SemanticType<'a> {
     Unit,
 }
 
-/// A capability/effect declaration visible to the current verification scope.
+/// Canonical identities for the closed built-in capability-kind vocabulary.
+///
+/// Capability identity is intentionally independent from EffectId: matching
+/// names do not imply shared authority or permission state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Capability<'a> {
-    pub name: &'a str,
+pub enum CapabilityId {
+    AllocateMemory,
+    DispatchNetworkCommand,
+    WriteFile,
+    ReadFile,
+    SpawnProcess,
+    SelfModify,
 }
 
-/// Tracks affine capability state. The current AST does not yet expose
-/// capability-token declarations, so this ledger is an explicit foundation
-/// for the upcoming capability-aware syntax/IR.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct CapabilityLedger<'a> {
-    available: BTreeSet<&'a str>,
-    consumed: BTreeSet<&'a str>,
-}
-
-impl<'a> CapabilityLedger<'a> {
-    pub fn grant(&mut self, capability: Capability<'a>) -> bool {
-        self.available.insert(capability.name)
-    }
-
-    pub fn consume(&mut self, capability: Capability<'a>) -> Result<(), CapabilityError<'a>> {
-        if !self.available.remove(capability.name) {
-            if self.consumed.contains(capability.name) {
-                return Err(CapabilityError::AlreadyConsumed(capability.name));
-            }
-            return Err(CapabilityError::Unavailable(capability.name));
+impl CapabilityId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AllocateMemory => "AllocateMemory",
+            Self::DispatchNetworkCommand => "DispatchNetworkCommand",
+            Self::WriteFile => "WriteFile",
+            Self::ReadFile => "ReadFile",
+            Self::SpawnProcess => "SpawnProcess",
+            Self::SelfModify => "SelfModify",
         }
-        self.consumed.insert(capability.name);
-        Ok(())
+    }
+}
+
+/// Resolve a source spelling to an exact, case-sensitive capability kind.
+pub fn resolve_capability(name: &str) -> Option<CapabilityId> {
+    match name {
+        "AllocateMemory" => Some(CapabilityId::AllocateMemory),
+        "DispatchNetworkCommand" => Some(CapabilityId::DispatchNetworkCommand),
+        "WriteFile" => Some(CapabilityId::WriteFile),
+        "ReadFile" => Some(CapabilityId::ReadFile),
+        "SpawnProcess" => Some(CapabilityId::SpawnProcess),
+        "SelfModify" => Some(CapabilityId::SelfModify),
+        _ => None,
+    }
+}
+
+/// Identifies one unique capability authority instance.
+///
+/// Instance identity is never derived from capability kind, so two instances
+/// of the same kind remain distinct and non-interchangeable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CapabilityInstanceId(u64);
+
+impl CapabilityInstanceId {
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Identifies an authoritative ownership context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CapabilityOwnerId(u64);
+
+impl CapabilityOwnerId {
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Affine lifecycle state for one capability instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityState {
+    Available,
+    InTransit { call_id: u64 },
+    Consumed { call_id: u64, consumed_at: Span },
+}
+
+/// Immutable identity and provenance record for one capability instance.
+///
+/// The instance itself is deliberately not Clone; duplicating this record
+/// must never become a mechanism for duplicating authority.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CapabilityInstance {
+    id: CapabilityInstanceId,
+    kind: CapabilityId,
+    owner: CapabilityOwnerId,
+    state: CapabilityState,
+    provenance: Span,
+}
+
+impl CapabilityInstance {
+    pub const fn id(&self) -> CapabilityInstanceId {
+        self.id
     }
 
-    pub fn available(&self, name: &str) -> bool {
-        self.available.contains(name)
+    pub const fn kind(&self) -> CapabilityId {
+        self.kind
     }
 
-    pub fn consumed(&self, name: &str) -> bool {
-        self.consumed.contains(name)
+    pub const fn owner(&self) -> CapabilityOwnerId {
+        self.owner
+    }
+
+    pub const fn state(&self) -> CapabilityState {
+        self.state
+    }
+
+    pub const fn provenance(&self) -> Span {
+        self.provenance
+    }
+}
+
+/// Authoritative affine capability ledger.
+///
+/// The ledger owns the unique instance records and is deliberately not
+/// Clone: an independent copy of ownership state would create a second
+/// authority history and could resurrect consumed authority.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct CapabilityLedger {
+    instances: BTreeMap<CapabilityInstanceId, CapabilityInstance>,
+    owners: BTreeSet<CapabilityOwnerId>,
+    next_instance_id: u64,
+    next_owner_id: u64,
+    root_owner: Option<CapabilityOwnerId>,
+}
+
+impl CapabilityLedger {
+    pub fn new() -> Self {
+        let root_owner = CapabilityOwnerId(1);
+        let mut owners = BTreeSet::new();
+        owners.insert(root_owner);
+
+        Self {
+            instances: BTreeMap::new(),
+            owners,
+            next_instance_id: 1,
+            next_owner_id: 2,
+            root_owner: Some(root_owner),
+        }
+    }
+
+    pub const fn root_owner(&self) -> CapabilityOwnerId {
+        match self.root_owner {
+            Some(owner) => owner,
+            None => CapabilityOwnerId(0),
+        }
+    }
+
+    /// Create a distinct ownership context within this ledger.
+    pub fn create_owner(&mut self) -> CapabilityOwnerId {
+        let owner = CapabilityOwnerId(self.next_owner_id);
+        self.next_owner_id = self.next_owner_id.saturating_add(1);
+        self.owners.insert(owner);
+        owner
+    }
+
+    /// Provision a fresh authority instance.
+    ///
+    /// This is intentionally not called grant: provisioning creates a new
+    /// instance identity and can never reactivate an existing instance.
+    pub fn provision(
+        &mut self,
+        kind: CapabilityId,
+        owner: CapabilityOwnerId,
+        provenance: Span,
+    ) -> Result<CapabilityInstanceId, CapabilityError> {
+        if !self.owners.contains(&owner) {
+            return Err(CapabilityError::UnknownOwner(owner));
+        }
+
+        let id = CapabilityInstanceId(self.next_instance_id);
+        self.next_instance_id = self.next_instance_id.saturating_add(1);
+
+        self.instances.insert(
+            id,
+            CapabilityInstance {
+                id,
+                kind,
+                owner,
+                state: CapabilityState::Available,
+                provenance,
+            },
+        );
+
+        Ok(id)
+    }
+
+    pub fn instance(&self, id: CapabilityInstanceId) -> Result<&CapabilityInstance, CapabilityError> {
+        self.instances
+            .get(&id)
+            .ok_or(CapabilityError::UnknownInstance(id))
+    }
+
+    /// Move an available instance into an in-transit state.
+    pub fn enter_transit(
+        &mut self,
+        id: CapabilityInstanceId,
+        call_id: u64,
+    ) -> Result<(), CapabilityError> {
+        let instance = self
+            .instances
+            .get_mut(&id)
+            .ok_or(CapabilityError::UnknownInstance(id))?;
+
+        match instance.state {
+            CapabilityState::Available => {
+                instance.state = CapabilityState::InTransit { call_id };
+                Ok(())
+            }
+            CapabilityState::InTransit { .. } => Err(CapabilityError::AlreadyInTransit(id)),
+            CapabilityState::Consumed { .. } => Err(CapabilityError::AlreadyConsumed(id)),
+        }
+    }
+
+    /// Consume an in-transit instance irreversibly.
+    pub fn consume(
+        &mut self,
+        id: CapabilityInstanceId,
+        call_id: u64,
+        consumed_at: Span,
+    ) -> Result<(), CapabilityError> {
+        let instance = self
+            .instances
+            .get_mut(&id)
+            .ok_or(CapabilityError::UnknownInstance(id))?;
+
+        match instance.state {
+            CapabilityState::Available => Err(CapabilityError::NotInTransit(id)),
+            CapabilityState::InTransit { .. } => {
+                instance.state = CapabilityState::Consumed {
+                    call_id,
+                    consumed_at,
+                };
+                Ok(())
+            }
+            CapabilityState::Consumed { .. } => Err(CapabilityError::AlreadyConsumed(id)),
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CapabilityError<'a> {
-    Unavailable(&'a str),
-    AlreadyConsumed(&'a str),
+pub enum CapabilityError {
+    UnknownOwner(CapabilityOwnerId),
+    UnknownInstance(CapabilityInstanceId),
+    AlreadyInTransit(CapabilityInstanceId),
+    NotInTransit(CapabilityInstanceId),
+    AlreadyConsumed(CapabilityInstanceId),
 }
 
 /// Result of semantic verification.
@@ -234,6 +432,7 @@ pub struct SemanticVerifier<'src> {
     source: &'src str,
     diagnostics: Vec<Diagnostic<'src>>,
     declared_effects: BTreeSet<EffectId>,
+    capability_ledger: CapabilityLedger,
     epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
     callable_registry: CallableRegistry<'src>,
@@ -246,6 +445,7 @@ impl<'src> SemanticVerifier<'src> {
             source,
             diagnostics: Vec::new(),
             declared_effects: BTreeSet::new(),
+            capability_ledger: CapabilityLedger::new(),
             epistemic_confidence: None,
             epistemic_environment: EpistemicEnvironment::new(),
             callable_registry: CallableRegistry::default(),
@@ -1835,5 +2035,128 @@ mod callable_effect_context_tests {
             verifier.declared_effects.contains(&EffectId::DispatchNetworkCommand),
             "rule verification must restore the enclosing effect context"
         );
+    }
+
+
+    #[test]
+    fn capability_kind_resolution_is_exact_and_case_sensitive() {
+        assert_eq!(resolve_capability("SelfModify"), Some(CapabilityId::SelfModify));
+        assert_eq!(resolve_capability("selfmodify"), None);
+        assert_eq!(resolve_capability("UnknownCapability"), None);
+    }
+
+    #[test]
+    fn capability_instances_are_unique_even_for_the_same_kind() {
+        let mut ledger = CapabilityLedger::new();
+        let owner = ledger.root_owner();
+
+        let first = ledger
+            .provision(CapabilityId::SelfModify, owner, Span::new(10, 20))
+            .expect("first instance provision succeeds");
+        let second = ledger
+            .provision(CapabilityId::SelfModify, owner, Span::new(30, 40))
+            .expect("second instance provision succeeds");
+
+        assert_ne!(first, second);
+        assert_eq!(ledger.instance(first).unwrap().kind(), CapabilityId::SelfModify);
+        assert_eq!(ledger.instance(second).unwrap().kind(), CapabilityId::SelfModify);
+        assert_eq!(ledger.instance(first).unwrap().owner(), owner);
+        assert_eq!(ledger.instance(first).unwrap().provenance(), Span::new(10, 20));
+    }
+
+    #[test]
+    fn capability_state_follows_available_to_in_transit_to_consumed() {
+        let mut ledger = CapabilityLedger::new();
+        let owner = ledger.root_owner();
+        let instance = ledger
+            .provision(CapabilityId::ReadFile, owner, Span::new(0, 8))
+            .expect("instance provision succeeds");
+
+        assert_eq!(ledger.instance(instance).unwrap().state(), CapabilityState::Available);
+
+        ledger.enter_transit(instance, 41).expect("available instance enters transit");
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::InTransit { call_id: 41 }
+        );
+
+        ledger
+            .consume(instance, 41, Span::new(50, 58))
+            .expect("in-transit instance can be consumed");
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::Consumed {
+                call_id: 41,
+                consumed_at: Span::new(50, 58),
+            }
+        );
+    }
+
+    #[test]
+    fn consumed_capability_cannot_be_resurrected_or_reconsumed() {
+        let mut ledger = CapabilityLedger::new();
+        let owner = ledger.root_owner();
+        let instance = ledger
+            .provision(CapabilityId::SelfModify, owner, Span::new(0, 8))
+            .expect("instance provision succeeds");
+
+        ledger.enter_transit(instance, 7).expect("instance enters transit");
+        ledger
+            .consume(instance, 7, Span::new(20, 28))
+            .expect("instance is consumed");
+
+        assert_eq!(
+            ledger.enter_transit(instance, 8),
+            Err(CapabilityError::AlreadyConsumed(instance))
+        );
+        assert_eq!(
+            ledger.consume(instance, 8, Span::new(40, 48)),
+            Err(CapabilityError::AlreadyConsumed(instance))
+        );
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::Consumed {
+                call_id: 7,
+                consumed_at: Span::new(20, 28),
+            }
+        );
+    }
+
+    #[test]
+    fn capability_ledger_is_not_cloneable_and_authority_state_is_not_copyable() {
+        fn assert_not_clone<T: ?Sized>() {
+            let _ = std::any::type_name::<T>();
+        }
+
+        assert_not_clone::<CapabilityLedger>();
+        assert_not_clone::<CapabilityInstance>();
+
+        let mut ledger = CapabilityLedger::new();
+        let owner = ledger.root_owner();
+        let instance = ledger
+            .provision(CapabilityId::WriteFile, owner, Span::new(0, 8))
+            .expect("instance provision succeeds");
+        ledger.enter_transit(instance, 1).expect("instance enters transit");
+
+        let state = ledger.instance(instance).unwrap().state();
+        assert_eq!(state, CapabilityState::InTransit { call_id: 1 });
+        assert_eq!(
+            ledger.consume(instance, 1, Span::new(10, 18)),
+            Ok(())
+        );
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::Consumed {
+                call_id: 1,
+                consumed_at: Span::new(10, 18),
+            }
+        );
+    }
+
+    #[test]
+    fn verifier_owns_a_dedicated_capability_ledger() {
+        let verifier = SemanticVerifier::new("");
+        let root_owner = verifier.capability_ledger.root_owner();
+        assert_eq!(root_owner.value(), 1);
     }
 }
