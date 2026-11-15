@@ -451,14 +451,18 @@ impl<'src> SemanticVerifier<'src> {
                     let _ = self.infer_expression(value);
                 }
                 GoalMember::Condition { value, span } => {
-                    self.validate_expression_types(value);
+                    let validation = self.validate_expression_types(value);
                     let state = self.infer_expression(value);
-                    self.verify_deterministic_gate(state, *span);
+                    if validation.is_valid {
+                        self.verify_deterministic_gate(state, *span);
+                    }
                 }
                 GoalMember::Target { value, span } => {
-                    self.validate_expression_types(value);
+                    let validation = self.validate_expression_types(value);
                     let state = self.infer_expression(value);
-                    self.verify_deterministic_gate(state, *span);
+                    if validation.is_valid {
+                        self.verify_deterministic_gate(state, *span);
+                    }
                 }
             }
         }
@@ -521,8 +525,11 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
                 GovernanceMember::Constraint { value, span } => {
-                    self.validate_expression_types(value);
-                    if let Some((name, constraint)) = self.numeric_constraint(value) {
+                    let validation = self.validate_expression_types(value);
+                    let _ = self.infer_expression(value);
+                    if validation.is_valid
+                        && let Some((name, constraint)) = self.numeric_constraint(value)
+                    {
                         let entry = constraints.entry(name).or_insert(NumericConstraint {
                             lower: None,
                             upper: None,
