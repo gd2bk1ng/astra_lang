@@ -189,12 +189,14 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         self.expect(TokenKind::LParen, "(")?;
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen, ")")?;
+        let effects = if self.at_word("effects") { Some(self.parse_effects()?) } else { None };
         let return_type = if self.at(TokenKind::Arrow) { self.bump(); Some(self.parse_type()?) } else { None };
         let body = self.parse_block()?;
         let body_end = body.span.end;
         Ok(Rule {
             name,
             params,
+            effects,
             return_type,
             body,
             span: Span::with_pos(start, body_end, start_token.span.line, start_token.span.column),
