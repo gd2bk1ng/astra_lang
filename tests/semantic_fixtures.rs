@@ -1072,3 +1072,19 @@ fn return_path_analysis_rejects_fallthrough_from_nested_expression_block() {
     );
 }
 
+#[test]
+fn return_path_analysis_does_not_assume_short_circuit_and_rhs_executes() {
+    let sources = [
+        "fn compute() -> Boolean { let result = false && { return true; }; }",
+        "fn compute() -> Boolean { let result = true || { return false; }; }",
+    ];
+
+    for source in sources {
+        let report = verify(source);
+        assert!(
+            report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2502"),
+            "a return nested in a logical RHS is not guaranteed to execute: {source}: {:?}",
+            report.diagnostics
+        );
+    }
+}
