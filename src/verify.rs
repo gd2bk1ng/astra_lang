@@ -193,6 +193,7 @@ struct CallableParameter<'src> {
 struct CallableSignature<'src> {
     name: &'src str,
     parameters: Vec<CallableParameter<'src>>,
+    effects: BTreeSet<EffectId>,
     return_type: Option<&'src str>,
     declaration_span: Span,
     declaration_kind: &'static str,
@@ -278,36 +279,50 @@ impl<'src> SemanticVerifier<'src> {
     fn collect_callable_declarations(&mut self, program: &Program<'src>) {
         for declaration in &program.declarations {
             let signature = match declaration {
-                Declaration::Function(function) => Some(CallableSignature {
-                    name: function.name,
-                    parameters: function
-                        .params
-                        .iter()
-                        .map(|parameter| CallableParameter {
-                            name: parameter.name,
-                            type_name: parameter.ty.name,
-                            span: parameter.span,
-                        })
-                        .collect(),
-                    return_type: function.return_type.as_ref().map(|ty| ty.name),
-                    declaration_span: function.span,
-                    declaration_kind: "function",
-                }),
-                Declaration::Rule(rule) => Some(CallableSignature {
-                    name: rule.name,
-                    parameters: rule
-                        .params
-                        .iter()
-                        .map(|parameter| CallableParameter {
-                            name: parameter.name,
-                            type_name: parameter.ty.name,
-                            span: parameter.span,
-                        })
-                        .collect(),
-                    return_type: rule.return_type.as_ref().map(|ty| ty.name),
-                    declaration_span: rule.span,
-                    declaration_kind: "rule",
-                }),
+                Declaration::Function(function) => {
+                    let mut effects = BTreeSet::new();
+                    if let Some(clause) = &function.effects {
+                        self.resolve_effect_items(&clause.items, &mut effects);
+                    }
+                    Some(CallableSignature {
+                        name: function.name,
+                        parameters: function
+                            .params
+                            .iter()
+                            .map(|parameter| CallableParameter {
+                                name: parameter.name,
+                                type_name: parameter.ty.name,
+                                span: parameter.span,
+                            })
+                            .collect(),
+                        effects,
+                        return_type: function.return_type.as_ref().map(|ty| ty.name),
+                        declaration_span: function.span,
+                        declaration_kind: "function",
+                    })
+                }
+                Declaration::Rule(rule) => {
+                    let mut effects = BTreeSet::new();
+                    if let Some(clause) = &rule.effects {
+                        self.resolve_effect_items(&clause.items, &mut effects);
+                    }
+                    Some(CallableSignature {
+                        name: rule.name,
+                        parameters: rule
+                            .params
+                            .iter()
+                            .map(|parameter| CallableParameter {
+                                name: parameter.name,
+                                type_name: parameter.ty.name,
+                                span: parameter.span,
+                            })
+                            .collect(),
+                        effects,
+                        return_type: rule.return_type.as_ref().map(|ty| ty.name),
+                        declaration_span: rule.span,
+                        declaration_kind: "rule",
+                    })
+                }
                 Declaration::Intent(_) => None,
             };
 
@@ -330,6 +345,33 @@ impl<'src> SemanticVerifier<'src> {
                         span,
                     );
                 }
+            }
+        }
+    }
+
+    /// Resolve effect declarations into canonical identities. Unknown names
+    /// never enter the set, and duplicates are detected only after resolution.
+    fn resolve_effect_items(
+        &mut self,
+        items: &[EffectItem<'src>],
+        effects: &mut BTreeSet<EffectId>,
+    ) {
+        for item in items {
+            let Some(effect_id) = resolve_effect(item.name) else {
+                self.error(
+                    CODE_EFFECT_UNKNOWN,
+                    format!("unknown effect '{}'", item.name),
+                    item.span,
+                );
+                continue;
+            };
+
+            if !effects.insert(effect_id) {
+                self.error(
+                    CODE_EFFECT_DUPLICATE,
+                    format!("effect '{}' is declared more than once", effect_id.as_str()),
+                    item.span,
+                );
             }
         }
     }
@@ -438,24 +480,7 @@ impl<'src> SemanticVerifier<'src> {
 
         for member in &intent.members {
             if let IntentValue::Effects(effects) = &member.value {
-                for item in &effects.items {
-                    let Some(effect_id) = resolve_effect(item.name) else {
-                        self.error(
-                            CODE_EFFECT_UNKNOWN,
-                            format!("unknown effect '{}'", item.name),
-                            item.span,
-                        );
-                        continue;
-                    };
-
-                    if !self.declared_effects.insert(effect_id) {
-                        self.error(
-                            CODE_EFFECT_DUPLICATE,
-                            format!("effect '{}' is declared more than once", effect_id.as_str()),
-                            item.span,
-                        );
-                    }
-                }
+                self.resolve_effect_items(&effects.items, &mut self.declared_effects);
             }
         }
 
@@ -1654,6 +1679,58 @@ mod callable_effect_context_tests {
         let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
         let program = Parser::new(&tokens).parse_program().expect("parsing succeeds");
         (tokens, program)
+    }
+
+    #[test]
+    fn callable_registry_stores_canonical_function_and_rule_effect_contracts() {
+        let source = concat!(
+            "fn reader() effects { ReadFile, WriteFile } { }\\n",
+            "rule sender() effects { DispatchNetworkCommand } { }\\n",
+            "fn plain() { }\\n",
+        );
+        let (_tokens, program) = parsed_program(source);
+        let mut verifier = SemanticVerifier::new(source);
+        verifier.collect_callable_declarations(&program);
+
+        let reader = verifier.callable_registry.get("reader").expect("function registered");
+        assert_eq!(
+            reader.effects,
+            BTreeSet::from([EffectId::ReadFile, EffectId::WriteFile])
+        );
+        let sender = verifier.callable_registry.get("sender").expect("rule registered");
+        assert_eq!(
+            sender.effects,
+            BTreeSet::from([EffectId::DispatchNetworkCommand])
+        );
+        let plain = verifier.callable_registry.get("plain").expect("plain function registered");
+        assert!(plain.effects.is_empty());
+        assert!(verifier.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn duplicate_callable_declaration_still_validates_its_effect_clause() {
+        let source = concat!(
+            "fn worker() effects { ReadFile } { }\\n",
+            "rule worker() effects { UnknownEffect, WriteFile } { }\\n",
+        );
+        let (_tokens, program) = parsed_program(source);
+        let mut verifier = SemanticVerifier::new(source);
+        verifier.collect_callable_declarations(&program);
+
+        assert_eq!(
+            verifier.callable_registry.get("worker").unwrap().effects,
+            BTreeSet::from([EffectId::ReadFile]),
+            "the duplicate declaration must not replace the first registered signature"
+        );
+        assert_eq!(
+            verifier.diagnostics.iter().filter(|d| d.code == CODE_EFFECT_UNKNOWN).count(),
+            1,
+            "the duplicate declaration's unknown effect must still be diagnosed"
+        );
+        assert_eq!(
+            verifier.diagnostics.iter().filter(|d| d.code == CODE_CALLABLE_DUPLICATE).count(),
+            1
+        );
     }
 
     #[test]

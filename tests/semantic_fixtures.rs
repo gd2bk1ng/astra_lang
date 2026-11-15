@@ -1452,3 +1452,62 @@ fn callable_bodies_do_not_inherit_ambient_intent_effects() {
         report.diagnostics
     );
 }
+
+
+#[test]
+fn callable_function_effect_clause_reports_unknown_and_duplicate_effects() {
+    let source = "fn reader() effects { ReadFile, UnknownEffect, ReadFile, UnknownEffect } { }";
+    let report = verify(source);
+    let unknown: Vec<_> = report.diagnostics.iter().filter(|d| d.code == "SYN2104").collect();
+    let duplicate: Vec<_> = report.diagnostics.iter().filter(|d| d.code == "SYN2101").collect();
+
+    assert_eq!(unknown.len(), 2, "each unresolved item must be diagnosed: {:?}", report.diagnostics);
+    assert_eq!(duplicate.len(), 1, "only repeated known identities are duplicates: {:?}", report.diagnostics);
+    assert_eq!(&source[unknown[0].span.start..unknown[0].span.end], "UnknownEffect");
+    assert_eq!(&source[duplicate[0].span.start..duplicate[0].span.end], "ReadFile");
+    assert_eq!(duplicate[0].message, "effect 'ReadFile' is declared more than once");
+}
+
+#[test]
+fn callable_rule_effect_clause_uses_same_resolution_contract() {
+    let source = "rule sender() effects { DispatchNetworkCommand, DispatchNetworkCommand, dispatchnetworkcommand } { }";
+    let report = verify(source);
+    let unknown: Vec<_> = report.diagnostics.iter().filter(|d| d.code == "SYN2104").collect();
+    let duplicate: Vec<_> = report.diagnostics.iter().filter(|d| d.code == "SYN2101").collect();
+
+    assert_eq!(unknown.len(), 1, "case mismatch must be unknown: {:?}", report.diagnostics);
+    assert_eq!(duplicate.len(), 1, "known canonical identity must be deduplicated: {:?}", report.diagnostics);
+    assert_eq!(&source[unknown[0].span.start..unknown[0].span.end], "dispatchnetworkcommand");
+    assert_eq!(&source[duplicate[0].span.start..duplicate[0].span.end], "DispatchNetworkCommand");
+}
+
+#[test]
+fn callable_without_effect_clause_has_no_effect_declaration_diagnostics() {
+    let source = "fn plain() { } rule also_plain() { }";
+    let report = verify(source);
+    assert!(
+        !report.diagnostics.iter().any(|d| d.code == "SYN2101" || d.code == "SYN2104"),
+        "omitted clauses must remain valid empty contracts: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn duplicate_callable_declaration_effects_are_still_validated() {
+    let source = concat!(
+        "fn worker() effects { ReadFile } { }\\n",
+        "rule worker() effects { UnknownEffect, WriteFile } { }\\n",
+    );
+    let report = verify(source);
+
+    assert_eq!(
+        report.diagnostics.iter().filter(|d| d.code == "SYN2104").count(),
+        1,
+        "effect clauses on rejected duplicate declarations must still be checked: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        report.diagnostics.iter().filter(|d| d.code == "SYN2401").count(),
+        1
+    );
+}
