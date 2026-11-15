@@ -282,7 +282,7 @@ impl<'src> SemanticVerifier<'src> {
                 Declaration::Function(function) => {
                     let mut effects = BTreeSet::new();
                     if let Some(clause) = &function.effects {
-                        effects = self.resolve_effect_items(&clause.items, effects);
+                        effects = Self::resolve_effect_items(self.source, &mut self.diagnostics, &clause.items, effects);
                     }
                     Some(CallableSignature {
                         name: function.name,
@@ -304,7 +304,7 @@ impl<'src> SemanticVerifier<'src> {
                 Declaration::Rule(rule) => {
                     let mut effects = BTreeSet::new();
                     if let Some(clause) = &rule.effects {
-                        effects = self.resolve_effect_items(&clause.items, effects);
+                        effects = Self::resolve_effect_items(self.source, &mut self.diagnostics, &clause.items, effects);
                     }
                     Some(CallableSignature {
                         name: rule.name,
@@ -352,26 +352,29 @@ impl<'src> SemanticVerifier<'src> {
     /// Resolve effect declarations into canonical identities. Unknown names
     /// never enter the set, and duplicates are detected only after resolution.
     fn resolve_effect_items(
-        &mut self,
+        source: &'src str,
+        diagnostics: &mut Vec<Diagnostic<'src>>,
         items: &[EffectItem<'src>],
         mut effects: BTreeSet<EffectId>,
     ) -> BTreeSet<EffectId> {
         for item in items {
             let Some(effect_id) = resolve_effect(item.name) else {
-                self.error(
+                diagnostics.push(DiagnosticEngine::semantic_error(
+                    source,
                     CODE_EFFECT_UNKNOWN,
                     format!("unknown effect '{}'", item.name),
                     item.span,
-                );
+                ));
                 continue;
             };
 
             if !effects.insert(effect_id) {
-                self.error(
+                diagnostics.push(DiagnosticEngine::semantic_error(
+                    source,
                     CODE_EFFECT_DUPLICATE,
                     format!("effect '{}' is declared more than once", effect_id.as_str()),
                     item.span,
-                );
+                ));
             }
         }
         effects
@@ -481,7 +484,13 @@ impl<'src> SemanticVerifier<'src> {
 
         for member in &intent.members {
             if let IntentValue::Effects(effects) = &member.value {
-                self.declared_effects = self.resolve_effect_items(&effects.items, std::mem::take(&mut self.declared_effects));
+                let existing_effects = std::mem::take(&mut self.declared_effects);
+                self.declared_effects = Self::resolve_effect_items(
+                    self.source,
+                    &mut self.diagnostics,
+                    &effects.items,
+                    existing_effects,
+                );
             }
         }
 
