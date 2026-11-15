@@ -774,7 +774,7 @@ impl<'src> SemanticVerifier<'src> {
             Expression::SelfModify { target, patch, span } => {
                 let _ = self.infer_expression(patch);
                 self.verify_effect_for_operation("SelfModify", *span);
-                if !self.declared_effects.contains("SelfModify") {
+                if !self.declared_effects.contains(&EffectId::SelfModify) {
                     self.error(
                         CODE_CAPABILITY_LEAK,
                         format!("self-modification of '{target}' requires the declared SelfModify effect"),
