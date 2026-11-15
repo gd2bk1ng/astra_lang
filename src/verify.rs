@@ -601,7 +601,7 @@ impl<'src> SemanticVerifier<'src> {
             return;
         }
 
-        if !semantic_types_compatible(&expected_type, actual_type) {
+        if !semantic_types_compatible(&expected_type, &actual_type) {
             self.error(
                 CODE_RETURN_TYPE_MISMATCH,
                 format!(
@@ -887,13 +887,12 @@ impl<'src> SemanticVerifier<'src> {
                 span,
             } => {
                 let callee_validation = self.validate_expression_types(callee);
-                let mut argument_types = Vec::with_capacity(arguments.len());
+                let mut argument_validations = Vec::with_capacity(arguments.len());
                 for argument in arguments {
-                    let validation = self.validate_expression_types(argument);
-                    argument_types.push(validation.validated_type());
+                    argument_validations.push(self.validate_expression_types(argument));
                 }
                 is_valid &= callee_validation.is_valid
-                    && argument_types.iter().all(|ty| *ty != SemanticType::Unknown);
+                    && argument_validations.iter().all(|result| result.is_valid);
 
                 let Expression::Identifier(name, _) = callee.as_ref() else {
                     return ExpressionValidation { inferred_type, is_valid };
@@ -919,12 +918,15 @@ impl<'src> SemanticVerifier<'src> {
                     is_valid = false;
                 }
 
-                for ((argument, actual_type), parameter) in
-                    arguments.iter().zip(&argument_types).zip(&signature.parameters)
+                for ((argument, validation), parameter) in arguments
+                    .iter()
+                    .zip(&argument_validations)
+                    .zip(&signature.parameters)
                 {
+                    let actual_type = validation.validated_type();
                     let expected_type = semantic_type_from_name(parameter.type_name);
 
-                    if *actual_type == SemanticType::Unknown
+                    if actual_type == SemanticType::Unknown
                         || expected_type == SemanticType::Unknown
                     {
                         continue;
