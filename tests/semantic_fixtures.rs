@@ -1088,3 +1088,47 @@ fn return_path_analysis_does_not_assume_short_circuit_and_rhs_executes() {
         );
     }
 }
+
+#[test]
+fn invalid_initializer_exposes_unknown_to_downstream_callable_validation() {
+    let source = concat!(
+        "fn consume(value: String) { }\n",
+        "fn caller() {\n",
+        "  let invalid = true && 1;\n",
+        "  consume(invalid);\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert_eq!(
+        report.diagnostics.iter().filter(|diagnostic| diagnostic.code == "SYN2301").count(),
+        1,
+        "the invalid logical expression should retain its primary operator diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2403"),
+        "an invalid initializer must not cause a downstream callable argument cascade: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn genuinely_unknown_initializer_remains_distinct_from_invalid_expression() {
+    let source = concat!(
+        "fn consume(value: String) { }\n",
+        "fn caller() {\n",
+        "  let unresolved = unknown_signal;\n",
+        "  consume(unresolved);\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "SYN2301" || diagnostic.code == "SYN2403"
+        }),
+        "genuine unknown types must remain permissive and suppress speculative diagnostics: {:?}",
+        report.diagnostics
+    );
+}
