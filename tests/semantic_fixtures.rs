@@ -1511,3 +1511,123 @@ fn duplicate_callable_declaration_effects_are_still_validated() {
         1
     );
 }
+
+
+#[test]
+fn callable_body_activates_its_declared_effect_contract() {
+    let source = "fn reader() effects { ReadFile } { read_file(); }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2102"),
+        "a callable must be allowed to exercise its own declared effects: {:?}",
+        report.diagnostics
+    );
+    assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
+}
+
+#[test]
+fn call_site_requires_callee_effect_contract_in_caller_scope() {
+    let source = concat!(
+        "fn reader() effects { ReadFile } { read_file(); }\n",
+        "fn caller() { reader(); }\n",
+    );
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2105")
+        .expect("missing callable effect permission diagnostic");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("reader()")
+    );
+    assert_eq!(
+        diagnostic.message,
+        "call to 'reader' requires effect 'ReadFile', but that effect is not declared in the current semantic scope"
+    );
+}
+
+#[test]
+fn call_site_accepts_callee_effects_declared_by_caller() {
+    let source = concat!(
+        "fn reader() effects { ReadFile } { read_file(); }\n",
+        "fn caller() effects { ReadFile } { reader(); }\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2105"),
+        "caller permissions must satisfy the callee contract: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn call_site_reports_missing_effects_in_deterministic_canonical_order() {
+    let source = concat!(
+        "fn worker() effects { WriteFile, ReadFile } { }\n",
+        "fn caller() { worker(); }\n",
+    );
+    let report = verify(source);
+
+    let diagnostics: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2105")
+        .collect();
+
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "each missing callable permission must be reported: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "call to 'worker' requires effect 'WriteFile', but that effect is not declared in the current semantic scope",
+            "call to 'worker' requires effect 'ReadFile', but that effect is not declared in the current semantic scope",
+        ]
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| source.get(diagnostic.span.start..diagnostic.span.end) == Some("worker()")),
+        "every SYN2105 must span the complete call expression: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn call_site_effect_diagnostic_is_independent_of_argument_validation() {
+    let source = concat!(
+        "fn worker(value: Integer) effects { ReadFile } { }\n",
+        "fn caller() { worker(\"wrong\"); }\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2403"),
+        "the invalid argument must retain its type diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2105"),
+        "missing callable effect permission must remain independently reportable: {:?}",
+        report.diagnostics
+    );
+
+    let first_relevant = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2403" || diagnostic.code == "SYN2105")
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert_eq!(first_relevant, vec!["SYN2403", "SYN2105"]);
+}

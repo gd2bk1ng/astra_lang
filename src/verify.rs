@@ -21,6 +21,7 @@ const CODE_EFFECT_DUPLICATE: &str = "SYN2101";
 const CODE_EFFECT_REQUIRED: &str = "SYN2102";
 const CODE_CAPABILITY_LEAK: &str = "SYN2103";
 const CODE_EFFECT_UNKNOWN: &str = "SYN2104";
+const CODE_CALL_EFFECT_REQUIRED: &str = "SYN2105";
 
 /// Canonical identities for the closed built-in effect vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -192,8 +193,6 @@ struct CallableParameter<'src> {
 struct CallableSignature<'src> {
     name: &'src str,
     parameters: Vec<CallableParameter<'src>>,
-    // Consumed by the subsequent call-site contract enforcement stage.
-    #[allow(dead_code)]
     effects: BTreeSet<EffectId>,
     return_type: Option<&'src str>,
     declaration_span: Span,
@@ -388,6 +387,11 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_function(&mut self, function: &Function<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
+        self.declared_effects = self
+            .callable_registry
+            .get(function.name)
+            .map(|signature| signature.effects.clone())
+            .unwrap_or_default();
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
@@ -425,6 +429,11 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
+        self.declared_effects = self
+            .callable_registry
+            .get(rule.name)
+            .map(|signature| signature.effects.clone())
+            .unwrap_or_default();
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
@@ -1068,6 +1077,18 @@ impl<'src> SemanticVerifier<'src> {
                         );
                         is_valid = false;
                     }
+                }
+
+                for effect in signature.effects.difference(&self.declared_effects) {
+                    self.error(
+                        CODE_CALL_EFFECT_REQUIRED,
+                        format!(
+                            "call to '{}' requires effect '{}', but that effect is not declared in the current semantic scope",
+                            signature.name,
+                            effect.as_str()
+                        ),
+                        *span,
+                    );
                 }
             }
             Expression::SelfModify { patch, .. } => {
