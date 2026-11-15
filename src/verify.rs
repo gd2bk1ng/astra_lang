@@ -1085,10 +1085,23 @@ fn analyze_expression_flow(expression: &Expression<'_>) -> FlowOutcome {
             FlowOutcome::FallsThrough
         }
         Expression::Unary { operand, .. } => analyze_expression_flow(operand),
-        Expression::Binary { left, right, .. } => {
+        Expression::Binary {
+            left,
+            operator,
+            right,
+            ..
+        } => {
             if analyze_expression_flow(left) == FlowOutcome::Returns {
                 return FlowOutcome::Returns;
             }
+
+            // Logical operators may short-circuit. A return nested in the
+            // right operand is therefore not guaranteed to execute and cannot
+            // establish a return for the enclosing callable.
+            if matches!(operator, BinaryOp::And | BinaryOp::Or) {
+                return FlowOutcome::FallsThrough;
+            }
+
             analyze_expression_flow(right)
         }
         Expression::SelfModify { patch, .. } => analyze_expression_flow(patch),
