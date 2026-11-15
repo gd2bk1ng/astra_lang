@@ -27,6 +27,7 @@ const CODE_TYPE_MISMATCH: &str = "SYN2301";
 const CODE_CALLABLE_DUPLICATE: &str = "SYN2401";
 const CODE_CALL_ARITY: &str = "SYN2402";
 const CODE_CALL_ARGUMENT_TYPE: &str = "SYN2403";
+const CODE_RETURN_TYPE_MISMATCH: &str = "SYN2501";
 
 /// The semantic confidence attached to a value.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -176,6 +177,7 @@ pub struct SemanticVerifier<'src> {
     epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
     callable_registry: CallableRegistry<'src>,
+    expected_return_type: Option<SemanticType<'src>>,
 }
 
 impl<'src> SemanticVerifier<'src> {
@@ -187,6 +189,7 @@ impl<'src> SemanticVerifier<'src> {
             epistemic_confidence: None,
             epistemic_environment: EpistemicEnvironment::new(),
             callable_registry: CallableRegistry::default(),
+            expected_return_type: None,
         }
     }
 
@@ -268,10 +271,19 @@ impl<'src> SemanticVerifier<'src> {
         self.declared_effects.clear();
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
+
+        let previous_return_type = self.expected_return_type.take();
+        self.expected_return_type = function
+            .return_type
+            .as_ref()
+            .map(|type_ref| semantic_type_from_name(type_ref.name));
+
         for parameter in &function.params {
             self.register_parameter(parameter);
         }
         self.verify_block(&function.body);
+
+        self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
     }
 
@@ -279,10 +291,19 @@ impl<'src> SemanticVerifier<'src> {
         self.declared_effects.clear();
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
+
+        let previous_return_type = self.expected_return_type.take();
+        self.expected_return_type = rule
+            .return_type
+            .as_ref()
+            .map(|type_ref| semantic_type_from_name(type_ref.name));
+
         for parameter in &rule.params {
             self.register_parameter(parameter);
         }
         self.verify_block(&rule.body);
+
+        self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
     }
 
@@ -489,8 +510,12 @@ impl<'src> SemanticVerifier<'src> {
 
                     self.register_local_binding(name, inferred_type, *span);
                 }
-                Statement::Return { value, .. }
-                | Statement::Expression { expression: value, .. } => {
+                Statement::Return { value, .. } => {
+                    self.validate_expression_types(value);
+                    self.validate_return_type(value);
+                    let _ = self.infer_expression(value);
+                }
+                Statement::Expression { expression: value, .. } => {
                     self.validate_expression_types(value);
                     let _ = self.infer_expression(value);
                 }
@@ -506,6 +531,32 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
             }
+        }
+    }
+
+    fn validate_return_type(&mut self, value: &Expression<'src>) {
+        let Some(expected_type) = self.expected_return_type.clone() else {
+            // A callable without a declared return type has no return contract
+            // to enforce. The existing expression semantics remain unchanged.
+            return;
+        };
+
+        let actual_type = self.infer_expression_type(value);
+
+        // Unknown or unsupported types cannot establish a mismatch. Preserve
+        // the verifier's existing cascade-suppression contract.
+        if actual_type == SemanticType::Unknown || expected_type == SemanticType::Unknown {
+            return;
+        }
+
+        if !semantic_types_compatible(&expected_type, &actual_type) {
+            self.error(
+                CODE_RETURN_TYPE_MISMATCH,
+                format!(
+                    "return expression has type {actual_type:?}; expected {expected_type:?}"
+                ),
+                expression_span(value),
+            );
         }
     }
 
