@@ -680,7 +680,7 @@ fn callable_registry_resolves_forward_function_references_and_return_types() {
 #[test]
 fn callable_registry_resolves_rules_as_callables() {
     let source = concat!(
-        "fn caller() { let result = calculate(2); }\n",
+        "fn caller() { let result = calculate(2); let sum = result + 1; }\n",
         "rule calculate(value: Integer) -> Integer { return value; }\n",
     );
     let report = verify(source);
@@ -806,4 +806,27 @@ fn callable_return_type_unknown_when_omitted_or_user_defined() {
         "omitted and unsupported return types should remain Unknown without cascades: {:?}",
         report.diagnostics
     );
+}
+
+
+#[test]
+fn callable_arity_mismatch_rejects_extra_arguments() {
+    let source = concat!(
+        "fn caller() { target(1, true); }\n",
+        "fn target(value: Integer) { }\n",
+    );
+    let report = verify(source);
+    let diagnostics: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2402")
+        .collect();
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        source.get(diagnostics[0].span.start..diagnostics[0].span.end),
+        Some("target(1, true)")
+    );
+    assert!(diagnostics[0].message.contains("2 argument"));
+    assert!(diagnostics[0].message.contains("requires 1"));
 }
