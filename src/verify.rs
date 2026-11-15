@@ -24,6 +24,9 @@ const CODE_CAPABILITY_LEAK: &str = "SYN2103";
 const CODE_GOVERNANCE_CONTRADICTION: &str = "SYN2201";
 const CODE_GOVERNANCE_EMPTY: &str = "SYN2202";
 const CODE_TYPE_MISMATCH: &str = "SYN2301";
+const CODE_CALLABLE_DUPLICATE: &str = "SYN2401";
+const CODE_CALL_ARITY: &str = "SYN2402";
+const CODE_CALL_ARGUMENT_TYPE: &str = "SYN2403";
 
 /// The semantic confidence attached to a value.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -119,6 +122,45 @@ impl<'a> SemanticReport<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CallableParameter<'src> {
+    name: &'src str,
+    type_name: &'src str,
+    span: Span,
+}
+
+#[derive(Debug, Clone)]
+struct CallableSignature<'src> {
+    name: &'src str,
+    parameters: Vec<CallableParameter<'src>>,
+    return_type: Option<&'src str>,
+    declaration_span: Span,
+    declaration_kind: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct CallableRegistry<'src> {
+    signatures: BTreeMap<&'src str, CallableSignature<'src>>,
+}
+
+impl<'src> CallableRegistry<'src> {
+    fn register(&mut self, signature: CallableSignature<'src>) -> bool {
+        use std::collections::btree_map::Entry;
+
+        match self.signatures.entry(signature.name) {
+            Entry::Vacant(entry) => {
+                entry.insert(signature);
+                true
+            }
+            Entry::Occupied(_) => false,
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&CallableSignature<'src>> {
+        self.signatures.get(name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct NumericConstraint {
     lower: Option<f64>,
@@ -133,6 +175,7 @@ pub struct SemanticVerifier<'src> {
     declared_effects: BTreeSet<&'src str>,
     epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
+    callable_registry: CallableRegistry<'src>,
 }
 
 impl<'src> SemanticVerifier<'src> {
@@ -143,10 +186,16 @@ impl<'src> SemanticVerifier<'src> {
             declared_effects: BTreeSet::new(),
             epistemic_confidence: None,
             epistemic_environment: EpistemicEnvironment::new(),
+            callable_registry: CallableRegistry::default(),
         }
     }
 
     pub fn verify_program(mut self, program: &Program<'src>) -> SemanticReport<'src> {
+        // Pass 1: collect every top-level callable before checking any body.
+        // This makes call resolution independent of source declaration order.
+        self.collect_callable_declarations(program);
+
+        // Pass 2: verify declaration bodies against the completed registry.
         for declaration in &program.declarations {
             match declaration {
                 Declaration::Function(function) => self.verify_function(function),
@@ -162,6 +211,57 @@ impl<'src> SemanticVerifier<'src> {
 
     pub fn diagnostics(&self) -> &[Diagnostic<'src>] {
         &self.diagnostics
+    }
+
+    fn collect_callable_declarations(&mut self, program: &Program<'src>) {
+        for declaration in &program.declarations {
+            let signature = match declaration {
+                Declaration::Function(function) => Some(CallableSignature {
+                    name: function.name,
+                    parameters: function
+                        .params
+                        .iter()
+                        .map(|parameter| CallableParameter {
+                            name: parameter.name,
+                            type_name: parameter.ty.name,
+                            span: parameter.span,
+                        })
+                        .collect(),
+                    return_type: function.return_type.as_ref().map(|ty| ty.name),
+                    declaration_span: function.span,
+                    declaration_kind: "function",
+                }),
+                Declaration::Rule(rule) => Some(CallableSignature {
+                    name: rule.name,
+                    parameters: rule
+                        .params
+                        .iter()
+                        .map(|parameter| CallableParameter {
+                            name: parameter.name,
+                            type_name: parameter.ty.name,
+                            span: parameter.span,
+                        })
+                        .collect(),
+                    return_type: rule.return_type.as_ref().map(|ty| ty.name),
+                    declaration_span: rule.span,
+                    declaration_kind: "rule",
+                }),
+                Declaration::Intent(_) => None,
+            };
+
+            if let Some(signature) = signature {
+                let name = signature.name;
+                let kind = signature.declaration_kind;
+                let span = signature.declaration_span;
+                if !self.callable_registry.register(signature) {
+                    self.error(
+                        CODE_CALLABLE_DUPLICATE,
+                        format!("callable '{name}' is declared more than once; functions and rules share one top-level namespace (duplicate {kind})"),
+                        span,
+                    );
+                }
+            }
+        }
     }
 
     fn verify_function(&mut self, function: &Function<'src>) {
@@ -573,8 +673,18 @@ impl<'src> SemanticVerifier<'src> {
                     },
                 }
             }
-            Expression::Call { .. }
-            | Expression::Block(_)
+            Expression::Call { callee, .. } => {
+                let Expression::Identifier(name, _) = callee.as_ref() else {
+                    return SemanticType::Unknown;
+                };
+
+                self.callable_registry
+                    .get(name)
+                    .and_then(|signature| signature.return_type)
+                    .map(semantic_type_from_name)
+                    .unwrap_or(SemanticType::Unknown)
+            }
+            Expression::Block(_)
             | Expression::Symbolic { .. }
             | Expression::SelfModify { .. } => SemanticType::Unknown,
         }
@@ -669,11 +779,59 @@ impl<'src> SemanticVerifier<'src> {
             Expression::Call {
                 callee,
                 arguments,
-                ..
+                span,
             } => {
                 self.validate_expression_types(callee);
                 for argument in arguments {
                     self.validate_expression_types(argument);
+                }
+
+                let Expression::Identifier(name, _) = callee.as_ref() else {
+                    return;
+                };
+                let Some(signature) = self.callable_registry.get(name).cloned() else {
+                    // Unregistered and computed callees retain the existing
+                    // permissive behavior; built-ins are handled separately
+                    // by the confidence/effect verifier.
+                    return;
+                };
+
+                if arguments.len() != signature.parameters.len() {
+                    self.error(
+                        CODE_CALL_ARITY,
+                        format!(
+                            "call to '{}' supplies {} argument(s), but its {} declaration requires {}",
+                            signature.name,
+                            arguments.len(),
+                            signature.declaration_kind,
+                            signature.parameters.len()
+                        ),
+                        *span,
+                    );
+                }
+
+                for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
+                    let actual_type = self.infer_expression_type(argument);
+                    let expected_type = semantic_type_from_name(parameter.type_name);
+
+                    // Unknown or unsupported types do not produce speculative
+                    // argument diagnostics or cascades.
+                    if actual_type == SemanticType::Unknown
+                        || expected_type == SemanticType::Unknown
+                    {
+                        continue;
+                    }
+
+                    if !semantic_types_compatible(&expected_type, &actual_type) {
+                        self.error(
+                            CODE_CALL_ARGUMENT_TYPE,
+                            format!(
+                                "argument for parameter '{}' in call to '{}' has type {actual_type:?}; expected {expected_type:?}",
+                                parameter.name, signature.name
+                            ),
+                            expression_span(argument),
+                        );
+                    }
                 }
             }
             Expression::SelfModify { patch, .. } => {
@@ -799,6 +957,23 @@ fn combine_epistemic(left: ConfidenceState, right: ConfidenceState) -> Confidenc
         }
         (ConfidenceState::Unknown, _) | (_, ConfidenceState::Unknown) => ConfidenceState::Unknown,
         _ => ConfidenceState::Deterministic,
+    }
+}
+
+fn semantic_types_compatible(expected: &SemanticType<'_>, actual: &SemanticType<'_>) -> bool {
+    expected == actual || (is_numeric_type(expected) && is_numeric_type(actual))
+}
+
+fn expression_span(expression: &Expression<'_>) -> Span {
+    match expression {
+        Expression::Identifier(_, span)
+        | Expression::Literal(_, span)
+        | Expression::Call { span, .. }
+        | Expression::Unary { span, .. }
+        | Expression::Binary { span, .. }
+        | Expression::Symbolic { span, .. }
+        | Expression::SelfModify { span, .. } => *span,
+        Expression::Block(block) => block.span,
     }
 }
 
