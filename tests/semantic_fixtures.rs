@@ -872,12 +872,9 @@ fn return_contract_rejects_rule_value_type_mismatch() {
 #[test]
 fn return_contract_allows_existing_numeric_compatibility() {
     let source = concat!(
-        "fn calculate() -> Float {
-",
-        "  return 1;
-",
-        "}
-",
+        "fn calculate() -> Float {\n",
+        "  return 1;\n",
+        "}\n",
     );
     let report = verify(source);
 
@@ -903,16 +900,11 @@ fn return_contract_suppresses_unknown_type_cascades() {
 #[test]
 fn return_contract_is_inherited_by_nested_backtrack_blocks() {
     let source = concat!(
-        "fn calculate() -> Integer {
-",
-        "  backtrack {
-",
-        "    return \"wrong\";
-",
-        "  }
-",
-        "}
-",
+        "fn calculate() -> Integer {\n",
+        "  backtrack {\n",
+        "    return \"wrong\";\n",
+        "  }\n",
+        "}\n",
     );
     let report = verify(source);
 
@@ -937,16 +929,11 @@ fn return_contract_is_inherited_by_nested_backtrack_blocks() {
 #[test]
 fn return_contract_is_inherited_by_nested_expression_blocks() {
     let source = concat!(
-        "fn calculate() -> Integer {
-",
-        "  return {
-",
-        "    return \"wrong\";
-",
-        "  };
-",
-        "}
-",
+        "fn calculate() -> Integer {\n",
+        "  return {\n",
+        "    return \"wrong\";\n",
+        "  };\n",
+        "}\n",
     );
     let report = verify(source);
 
