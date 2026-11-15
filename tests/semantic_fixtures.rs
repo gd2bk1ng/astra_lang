@@ -1394,3 +1394,61 @@ fn invalid_goal_expression_still_reports_independent_effect_diagnostic() {
     );
 }
 
+#[test]
+fn multiple_effect_blocks_aggregate_into_one_intent_contract() {
+    let source = concat!(
+        "intent mission {\n",
+        "  effects { ReadFile }\n",
+        "  effects { DispatchNetworkCommand }\n",
+        "  workspace { read_file(); dispatch_network_command(); }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "all valid effect blocks must contribute to the unified intent contract: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn nested_backtrack_and_expression_blocks_inherit_intent_effects() {
+    let source = concat!(
+        "intent mission {\n",
+        "  effects { DispatchNetworkCommand }\n",
+        "  workspace {\n",
+        "    backtrack { dispatch_network_command(); }\n",
+        "    { dispatch_network_command(); };\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "nested Backtrack and expression blocks must inherit the intent effect contract: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_bodies_do_not_inherit_ambient_intent_effects() {
+    let source = concat!(
+        "intent mission { effects { DispatchNetworkCommand } }\n",
+        "fn isolated_function() { dispatch_network_command(); }\n",
+        "rule isolated_rule() { dispatch_network_command(); }\n",
+    );
+    let report = verify(source);
+    let missing_effects = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2102")
+        .count();
+
+    assert_eq!(
+        missing_effects, 2,
+        "both function and rule bodies must be isolated from intent effects: {:?}",
+        report.diagnostics
+    );
+}

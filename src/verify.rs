@@ -335,7 +335,7 @@ impl<'src> SemanticVerifier<'src> {
     }
 
     fn verify_function(&mut self, function: &Function<'src>) {
-        self.declared_effects.clear();
+        let previous_effects = std::mem::take(&mut self.declared_effects);
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
@@ -368,10 +368,11 @@ impl<'src> SemanticVerifier<'src> {
 
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
+        self.declared_effects = previous_effects;
     }
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
-        self.declared_effects.clear();
+        let previous_effects = std::mem::take(&mut self.declared_effects);
         self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
@@ -404,6 +405,7 @@ impl<'src> SemanticVerifier<'src> {
 
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
+        self.declared_effects = previous_effects;
     }
 
     fn register_parameter(&mut self, parameter: &Parameter<'src>) {
@@ -1640,6 +1642,61 @@ mod adversarial_type_propagation_tests {
                 .expect("outer binding state remains unchanged")
                 .epistemic_state,
             EpistemicState::Uncertain
+        );
+    }
+}
+
+#[cfg(test)]
+mod callable_effect_context_tests {
+    use super::*;
+
+    fn parsed_program(source: &str) -> (Vec<Token<'_>>, Program<'_>) {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let program = Parser::new(&tokens).parse_program().expect("parsing succeeds");
+        (tokens, program)
+    }
+
+    #[test]
+    fn function_isolates_effects_and_restores_enclosing_context() {
+        let source = "fn worker() { dispatch_network_command(); }";
+        let (_tokens, program) = parsed_program(source);
+        let Declaration::Function(function) = &program.declarations[0] else {
+            panic!("expected function declaration");
+        };
+
+        let mut verifier = SemanticVerifier::new(source);
+        verifier.declared_effects.insert(EffectId::DispatchNetworkCommand);
+        verifier.verify_function(function);
+
+        assert!(
+            verifier.diagnostics.iter().any(|diagnostic| diagnostic.code == CODE_EFFECT_REQUIRED),
+            "function must not inherit the enclosing effect context"
+        );
+        assert!(
+            verifier.declared_effects.contains(&EffectId::DispatchNetworkCommand),
+            "function verification must restore the enclosing effect context"
+        );
+    }
+
+    #[test]
+    fn rule_isolates_effects_and_restores_enclosing_context() {
+        let source = "rule worker() { dispatch_network_command(); }";
+        let (_tokens, program) = parsed_program(source);
+        let Declaration::Rule(rule) = &program.declarations[0] else {
+            panic!("expected rule declaration");
+        };
+
+        let mut verifier = SemanticVerifier::new(source);
+        verifier.declared_effects.insert(EffectId::DispatchNetworkCommand);
+        verifier.verify_rule(rule);
+
+        assert!(
+            verifier.diagnostics.iter().any(|diagnostic| diagnostic.code == CODE_EFFECT_REQUIRED),
+            "rule must not inherit the enclosing effect context"
+        );
+        assert!(
+            verifier.declared_effects.contains(&EffectId::DispatchNetworkCommand),
+            "rule verification must restore the enclosing effect context"
         );
     }
 }
