@@ -241,7 +241,14 @@ impl<'src> SemanticVerifier<'src> {
                 IntentValue::Goal(goal) => self.verify_goal(goal),
                 IntentValue::Effects(_) | IntentValue::Uncertainty(_) => {}
                 IntentValue::Governance(governance) => self.verify_governance(governance),
-                IntentValue::String(_) | IntentValue::Block(_) => {}
+                IntentValue::Block(block) => {
+                    // Intent-owned blocks form their own lexical scope while
+                    // inheriting the intent's declared effects and confidence.
+                    self.epistemic_environment.enter_scope();
+                    self.verify_block(block);
+                    self.epistemic_environment.exit_scope();
+                }
+                IntentValue::String(_) => {}
             }
         }
 
