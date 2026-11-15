@@ -282,7 +282,7 @@ impl<'src> SemanticVerifier<'src> {
                 Declaration::Function(function) => {
                     let mut effects = BTreeSet::new();
                     if let Some(clause) = &function.effects {
-                        self.resolve_effect_items(&clause.items, &mut effects);
+                        effects = self.resolve_effect_items(&clause.items, effects);
                     }
                     Some(CallableSignature {
                         name: function.name,
@@ -304,7 +304,7 @@ impl<'src> SemanticVerifier<'src> {
                 Declaration::Rule(rule) => {
                     let mut effects = BTreeSet::new();
                     if let Some(clause) = &rule.effects {
-                        self.resolve_effect_items(&clause.items, &mut effects);
+                        effects = self.resolve_effect_items(&clause.items, effects);
                     }
                     Some(CallableSignature {
                         name: rule.name,
@@ -354,8 +354,8 @@ impl<'src> SemanticVerifier<'src> {
     fn resolve_effect_items(
         &mut self,
         items: &[EffectItem<'src>],
-        effects: &mut BTreeSet<EffectId>,
-    ) {
+        mut effects: BTreeSet<EffectId>,
+    ) -> BTreeSet<EffectId> {
         for item in items {
             let Some(effect_id) = resolve_effect(item.name) else {
                 self.error(
@@ -374,6 +374,7 @@ impl<'src> SemanticVerifier<'src> {
                 );
             }
         }
+        effects
     }
 
     fn verify_function(&mut self, function: &Function<'src>) {
@@ -480,7 +481,7 @@ impl<'src> SemanticVerifier<'src> {
 
         for member in &intent.members {
             if let IntentValue::Effects(effects) = &member.value {
-                self.resolve_effect_items(&effects.items, &mut self.declared_effects);
+                self.declared_effects = self.resolve_effect_items(&effects.items, std::mem::take(&mut self.declared_effects));
             }
         }
 
