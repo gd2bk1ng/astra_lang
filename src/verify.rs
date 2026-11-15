@@ -193,7 +193,7 @@ struct CallableParameter<'src> {
 struct CallableSignature<'src> {
     name: &'src str,
     parameters: Vec<CallableParameter<'src>>,
-    effects: BTreeSet<EffectId>,
+    // Consumed by the subsequent call-site contract enforcement stage.\n    #[allow(dead_code)]\n    effects: BTreeSet<EffectId>,
     return_type: Option<&'src str>,
     declaration_span: Span,
     declaration_kind: &'static str,
@@ -1685,9 +1685,9 @@ mod callable_effect_context_tests {
     #[test]
     fn callable_registry_stores_canonical_function_and_rule_effect_contracts() {
         let source = concat!(
-            "fn reader() effects { ReadFile, WriteFile } { }\\n",
-            "rule sender() effects { DispatchNetworkCommand } { }\\n",
-            "fn plain() { }\\n",
+            "fn reader() effects { ReadFile, WriteFile } { }\n",
+            "rule sender() effects { DispatchNetworkCommand } { }\n",
+            "fn plain() { }\n",
         );
         let (_tokens, program) = parsed_program(source);
         let mut verifier = SemanticVerifier::new(source);
@@ -1711,8 +1711,8 @@ mod callable_effect_context_tests {
     #[test]
     fn duplicate_callable_declaration_still_validates_its_effect_clause() {
         let source = concat!(
-            "fn worker() effects { ReadFile } { }\\n",
-            "rule worker() effects { UnknownEffect, WriteFile } { }\\n",
+            "fn worker() effects { ReadFile } { }\n",
+            "rule worker() effects { UnknownEffect, WriteFile } { }\n",
         );
         let (_tokens, program) = parsed_program(source);
         let mut verifier = SemanticVerifier::new(source);

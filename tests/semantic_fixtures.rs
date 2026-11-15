@@ -1495,8 +1495,8 @@ fn callable_without_effect_clause_has_no_effect_declaration_diagnostics() {
 #[test]
 fn duplicate_callable_declaration_effects_are_still_validated() {
     let source = concat!(
-        "fn worker() effects { ReadFile } { }\\n",
-        "rule worker() effects { UnknownEffect, WriteFile } { }\\n",
+        "fn worker() effects { ReadFile } { }\n",
+        "rule worker() effects { UnknownEffect, WriteFile } { }\n",
     );
     let report = verify(source);
 
