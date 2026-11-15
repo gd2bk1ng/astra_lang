@@ -1211,3 +1211,99 @@ fn local_value_can_shadow_builtin_name_but_cannot_be_called() {
         report.diagnostics
     );
 }
+
+#[test]
+fn invalid_goal_condition_does_not_reach_deterministic_gate() {
+    let source = concat!(
+        "intent mission {\n",
+        "  uncertainty { confidence 0.95 }\n",
+        "  goal deploy {\n",
+        "    condition !signal + true\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "the invalid condition must retain its type diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2002"),
+        "an invalid condition must not feed a poisoned confidence state into deterministic-gate enforcement: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn invalid_goal_target_does_not_reach_deterministic_gate() {
+    let source = concat!(
+        "intent mission {\n",
+        "  uncertainty { confidence 0.95 }\n",
+        "  goal deploy {\n",
+        "    target !signal + true\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "the invalid target must retain its type diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2002"),
+        "an invalid target must not feed a poisoned confidence state into deterministic-gate enforcement: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn invalid_governance_constraint_does_not_create_false_contradiction() {
+    let source = concat!(
+        "intent release {\n",
+        "  governance {\n",
+        "    constraint risk >= 0.9\n",
+        "    constraint risk <= 0.8 + true\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "the invalid constraint must retain its type diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2201"),
+        "an invalid constraint must not contribute poisoned bounds to the contradiction ledger: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn invalid_goal_expression_still_reports_independent_effect_diagnostic() {
+    let source = concat!(
+        "intent mission {\n",
+        "  goal deploy {\n",
+        "    condition 1 + true + dispatch_network_command()\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2301"),
+        "the expression must retain its independent type diagnostic: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2102"),
+        "static effect inspection must still report the undeclared operation in an invalid expression: {:?}",
+        report.diagnostics
+    );
+}
+
