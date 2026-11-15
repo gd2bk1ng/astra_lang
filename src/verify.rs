@@ -28,6 +28,7 @@ const CODE_CALLABLE_DUPLICATE: &str = "SYN2401";
 const CODE_CALL_ARITY: &str = "SYN2402";
 const CODE_CALL_ARGUMENT_TYPE: &str = "SYN2403";
 const CODE_RETURN_TYPE_MISMATCH: &str = "SYN2501";
+const CODE_MISSING_RETURN: &str = "SYN2502";
 
 /// The semantic confidence attached to a value.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -283,6 +284,22 @@ impl<'src> SemanticVerifier<'src> {
         }
         self.verify_block(&function.body);
 
+        if let Some(expected_type) = function
+            .return_type
+            .as_ref()
+            .map(|type_ref| semantic_type_from_name(type_ref.name))
+            .filter(requires_explicit_return)
+            && analyze_block_flow(&function.body) == FlowOutcome::FallsThrough
+        {
+            self.error(
+                CODE_MISSING_RETURN,
+                format!(
+                    "callable declared to return {expected_type:?} but may fall through without a return"
+                ),
+                function.body.span,
+            );
+        }
+
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
     }
@@ -302,6 +319,22 @@ impl<'src> SemanticVerifier<'src> {
             self.register_parameter(parameter);
         }
         self.verify_block(&rule.body);
+
+        if let Some(expected_type) = rule
+            .return_type
+            .as_ref()
+            .map(|type_ref| semantic_type_from_name(type_ref.name))
+            .filter(requires_explicit_return)
+            && analyze_block_flow(&rule.body) == FlowOutcome::FallsThrough
+        {
+            self.error(
+                CODE_MISSING_RETURN,
+                format!(
+                    "callable declared to return {expected_type:?} but may fall through without a return"
+                ),
+                rule.body.span,
+            );
+        }
 
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
@@ -997,6 +1030,82 @@ impl<'src> SemanticVerifier<'src> {
             span,
         ));
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlowOutcome {
+    FallsThrough,
+    Returns,
+}
+
+/// Analyze sequential block flow without mutating verifier state.
+/// Backtrack is deliberately conservative: its body cannot guarantee that
+/// the enclosing sequence returns because its execution semantics are not
+/// yet specified as unconditional.
+fn analyze_block_flow(block: &Block<'_>) -> FlowOutcome {
+    for statement in &block.statements {
+        if analyze_statement_flow(statement) == FlowOutcome::Returns {
+            return FlowOutcome::Returns;
+        }
+    }
+
+    FlowOutcome::FallsThrough
+}
+
+fn analyze_statement_flow(statement: &Statement<'_>) -> FlowOutcome {
+    match statement {
+        Statement::Return { .. } => FlowOutcome::Returns,
+        Statement::Let {
+            value: Some(expression),
+            ..
+        }
+        | Statement::Expression { expression, .. } => analyze_expression_flow(expression),
+        Statement::Let { value: None, .. }
+        | Statement::Backtrack { .. }
+        | Statement::Annotation(_) => FlowOutcome::FallsThrough,
+    }
+}
+
+/// Expression blocks propagate nonlocal returns through their containing
+/// expression. Other expression children are visited in evaluation order.
+fn analyze_expression_flow(expression: &Expression<'_>) -> FlowOutcome {
+    match expression {
+        Expression::Block(block) => analyze_block_flow(block),
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            if analyze_expression_flow(callee) == FlowOutcome::Returns {
+                return FlowOutcome::Returns;
+            }
+            for argument in arguments {
+                if analyze_expression_flow(argument) == FlowOutcome::Returns {
+                    return FlowOutcome::Returns;
+                }
+            }
+            FlowOutcome::FallsThrough
+        }
+        Expression::Unary { operand, .. } => analyze_expression_flow(operand),
+        Expression::Binary { left, right, .. } => {
+            if analyze_expression_flow(left) == FlowOutcome::Returns {
+                return FlowOutcome::Returns;
+            }
+            analyze_expression_flow(right)
+        }
+        Expression::SelfModify { patch, .. } => analyze_expression_flow(patch),
+        Expression::Identifier(_, _)
+        | Expression::Literal(_, _)
+        | Expression::Symbolic { .. } => FlowOutcome::FallsThrough,
+    }
+}
+
+fn requires_explicit_return(ty: &SemanticType<'_>) -> bool {
+    matches!(
+        ty,
+        SemanticType::Integer
+            | SemanticType::Float
+            | SemanticType::Boolean
+            | SemanticType::String
+    )
 }
 
 fn combine_epistemic(left: ConfidenceState, right: ConfidenceState) -> ConfidenceState {
