@@ -641,7 +641,6 @@ fn duplicate_bindings_inside_intent_owned_blocks_are_rejected() {
     );
 }
 
-
 #[test]
 fn intent_owned_blocks_inherit_declared_effects() {
     let source = concat!(
