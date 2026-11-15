@@ -657,3 +657,153 @@ fn intent_owned_blocks_inherit_declared_effects() {
         report.diagnostics
     );
 }
+
+
+#[test]
+fn callable_registry_resolves_forward_function_references_and_return_types() {
+    let source = concat!(
+        "fn caller() {\\n",
+        "  let result = later(1);\\n",
+        "  let sum = result + 1.0;\\n",
+        "}\\n",
+        "fn later(value: Integer) -> Float { return 2.5; }\\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "forward callable resolution and return-type propagation should succeed: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_registry_resolves_rules_as_callables() {
+    let source = concat!(
+        "fn caller() { let result = calculate(2); }\\n",
+        "rule calculate(value: Integer) -> Integer { return value; }\\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "rule declarations should participate in callable resolution: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_registry_rejects_duplicate_function_and_rule_names() {
+    let source = concat!(
+        "fn shared(value: Integer) { }\\n",
+        "rule shared(value: Float) { }\\n",
+    );
+    let report = verify(source);
+    let duplicates: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2401")
+        .collect();
+
+    assert_eq!(duplicates.len(), 1, "cross-kind duplicate must be reported once");
+    assert_eq!(
+        source.get(duplicates[0].span.start..duplicates[0].span.end),
+        Some("rule shared(value: Float) { }")
+    );
+    assert!(duplicates[0].message.contains("shared"));
+}
+
+#[test]
+fn callable_arity_mismatch_reports_the_call_expression_span() {
+    let source = concat!(
+        "fn caller() { target(1); }\\n",
+        "fn target(value: Integer, enabled: Boolean) { }\\n",
+    );
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2402")
+        .expect("call with missing argument must be diagnosed");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("target(1)")
+    );
+    assert!(diagnostic.message.contains("1 argument"));
+    assert!(diagnostic.message.contains("requires 2"));
+}
+
+#[test]
+fn callable_argument_type_mismatch_highlights_the_argument() {
+    let source = concat!(
+        "fn caller() { target(\"wrong\"); }\\n",
+        "fn target(value: Integer) { }\\n",
+    );
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2403")
+        .expect("incompatible call argument must be diagnosed");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("\"wrong\"")
+    );
+    assert!(diagnostic.message.contains("value"));
+    assert!(diagnostic.message.contains("Integer"));
+    assert!(diagnostic.message.contains("String"));
+}
+
+#[test]
+fn callable_argument_types_allow_existing_numeric_compatibility() {
+    let source = concat!(
+        "fn caller() { accept_integer(1.5); accept_float(1); }\\n",
+        "fn accept_integer(value: Float) { }\\n",
+        "fn accept_float(value: Float) { }\\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "numeric argument compatibility should permit Integer/Float interchange: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_validation_suppresses_unknown_argument_type_cascades() {
+    let source = concat!(
+        "fn caller() { accept(unresolved_value); }\\n",
+        "fn accept(value: CustomRecord) { }\\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "unknown argument and user-defined parameter types must remain conservative: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_return_type_unknown_when_omitted_or_user_defined() {
+    let source = concat!(
+        "fn caller() {\\n",
+        "  let omitted = no_return_type();\\n",
+        "  let custom = custom_return_type();\\n",
+        "  let safe = omitted + 1;\\n",
+        "  let also_safe = custom + 1;\\n",
+        "}\\n",
+        "fn no_return_type() { }\\n",
+        "fn custom_return_type() -> CustomRecord { }\\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "omitted and unsupported return types should remain Unknown without cascades: {:?}",
+        report.diagnostics
+    );
+}
