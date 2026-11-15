@@ -21,6 +21,44 @@ const CODE_EPISTEMIC_BINDING_DUPLICATE: &str = "SYN2003";
 const CODE_EFFECT_DUPLICATE: &str = "SYN2101";
 const CODE_EFFECT_REQUIRED: &str = "SYN2102";
 const CODE_CAPABILITY_LEAK: &str = "SYN2103";
+const CODE_EFFECT_UNKNOWN: &str = "SYN2104";
+
+/// Canonical identities for the closed built-in effect vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EffectId {
+    AllocateMemory,
+    DispatchNetworkCommand,
+    WriteFile,
+    ReadFile,
+    SpawnProcess,
+    SelfModify,
+}
+
+impl EffectId {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::AllocateMemory => "AllocateMemory",
+            Self::DispatchNetworkCommand => "DispatchNetworkCommand",
+            Self::WriteFile => "WriteFile",
+            Self::ReadFile => "ReadFile",
+            Self::SpawnProcess => "SpawnProcess",
+            Self::SelfModify => "SelfModify",
+        }
+    }
+}
+
+/// Resolve a source spelling to its exact, case-sensitive built-in identity.
+fn resolve_effect(name: &str) -> Option<EffectId> {
+    match name {
+        "AllocateMemory" => Some(EffectId::AllocateMemory),
+        "DispatchNetworkCommand" => Some(EffectId::DispatchNetworkCommand),
+        "WriteFile" => Some(EffectId::WriteFile),
+        "ReadFile" => Some(EffectId::ReadFile),
+        "SpawnProcess" => Some(EffectId::SpawnProcess),
+        "SelfModify" => Some(EffectId::SelfModify),
+        _ => None,
+    }
+}
 const CODE_GOVERNANCE_CONTRADICTION: &str = "SYN2201";
 const CODE_GOVERNANCE_EMPTY: &str = "SYN2202";
 const CODE_TYPE_MISMATCH: &str = "SYN2301";
@@ -194,7 +232,7 @@ struct NumericConstraint {
 pub struct SemanticVerifier<'src> {
     source: &'src str,
     diagnostics: Vec<Diagnostic<'src>>,
-    declared_effects: BTreeSet<&'src str>,
+    declared_effects: BTreeSet<EffectId>,
     epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
     callable_registry: CallableRegistry<'src>,
@@ -399,10 +437,19 @@ impl<'src> SemanticVerifier<'src> {
         for member in &intent.members {
             if let IntentValue::Effects(effects) = &member.value {
                 for item in &effects.items {
-                    if !self.declared_effects.insert(item.name) {
+                    let Some(effect_id) = resolve_effect(item.name) else {
+                        self.error(
+                            CODE_EFFECT_UNKNOWN,
+                            format!("unknown effect '{}'", item.name),
+                            item.span,
+                        );
+                        continue;
+                    };
+
+                    if !self.declared_effects.insert(effect_id) {
                         self.error(
                             CODE_EFFECT_DUPLICATE,
-                            format!("effect '{}' is declared more than once", item.name),
+                            format!("effect '{}' is declared more than once", effect_id.as_str()),
                             item.span,
                         );
                     }
@@ -997,12 +1044,12 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
         let required = match operation {
-            "allocate_memory" => Some("AllocateMemory"),
-            "dispatch_network_command" => Some("DispatchNetworkCommand"),
-            "write_file" => Some("WriteFile"),
-            "read_file" => Some("ReadFile"),
-            "spawn_process" => Some("SpawnProcess"),
-            "SelfModify" => Some("SelfModify"),
+            "allocate_memory" => Some(EffectId::AllocateMemory),
+            "dispatch_network_command" => Some(EffectId::DispatchNetworkCommand),
+            "write_file" => Some(EffectId::WriteFile),
+            "read_file" => Some(EffectId::ReadFile),
+            "spawn_process" => Some(EffectId::SpawnProcess),
+            "SelfModify" => Some(EffectId::SelfModify),
             _ => None,
         };
 
@@ -1010,11 +1057,12 @@ impl<'src> SemanticVerifier<'src> {
             return;
         };
 
-        if !self.declared_effects.contains(required) {
+        if !self.declared_effects.contains(&required) {
             self.error(
                 CODE_EFFECT_REQUIRED,
                 format!(
-                    "operation '{operation}' requires effect '{required}', but that effect is not declared in the current semantic scope"
+                    "operation '{operation}' requires effect '{}', but that effect is not declared in the current semantic scope",
+                    required.as_str()
                 ),
                 span,
             );

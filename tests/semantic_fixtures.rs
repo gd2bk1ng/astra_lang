@@ -10,6 +10,93 @@ fn verify(source: &str) -> syntra_lang::SemanticReport<'_> {
 }
 
 #[test]
+fn unknown_effects_are_rejected_at_the_identifier_span() {
+    let source = "intent x { effects { Network } }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2104")
+        .expect("unknown effect must be diagnosed");
+
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "Network");
+    assert_eq!(diagnostic.message, "unknown effect 'Network'");
+}
+
+#[test]
+fn repeated_unknown_effects_each_report_unknown_not_duplicate() {
+    let source = "intent x { effects { Network, Network } }";
+    let report = verify(source);
+
+    assert_eq!(
+        report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "SYN2104")
+            .count(),
+        2
+    );
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "SYN2101"),
+        "unresolved names must not enter the canonical duplicate set: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn duplicate_effects_are_detected_by_canonical_identity() {
+    let source = "intent x { effects { WriteFile, WriteFile } }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2101")
+        .expect("duplicate known effect must be diagnosed");
+
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "WriteFile");
+    assert_eq!(
+        diagnostic.message,
+        "effect 'WriteFile' is declared more than once"
+    );
+}
+
+#[test]
+fn effect_names_are_case_sensitive() {
+    let source = "intent x { effects { writefile } }";
+    let report = verify(source);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2104")
+        .expect("incorrectly cased effect must be unknown");
+
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "writefile");
+}
+
+#[test]
+fn known_effect_declaration_remains_position_independent() {
+    let source = concat!(
+        "intent x {\n",
+        "  workspace { read_file(); }\n",
+        "  effects { ReadFile }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "SYN2102"),
+        "all intent effects must be collected before checking consumers: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
 fn valid_epistemic_resolution_and_declared_effects_pass() {
     let source = concat!(
         "intent mission {\n",
@@ -161,7 +248,7 @@ fn semantic_diagnostics_use_existing_engine_rendering() {
 
 #[test]
 fn verifier_preserves_borrowed_ast_source_provenance() {
-    let source = "intent x { effects { Network } }";
+    let source = "intent x { effects { ReadFile } }";
     let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
     let mut parser = Parser::new(&tokens);
     let program = parser.parse_program().expect("parsing succeeds");
