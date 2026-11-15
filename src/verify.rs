@@ -5,9 +5,8 @@
 //! semantically admissible under the currently implemented verifier rules?".
 //!
 //! The current AST does not yet encode probabilistic variable declarations or
-//! function-local effect/capability clauses. The verifier therefore implements
-//! the strongest checks expressible today and exposes explicit capability and
-//! epistemic state types for the next syntax/IR expansion.
+//! capability-token declarations. Callable effect contracts are collected in
+//! the shared registry; capability ownership remains a separate future layer.
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
