@@ -800,10 +800,12 @@ impl<'src> SemanticVerifier<'src> {
                     self.error(
                         CODE_CALL_ARITY,
                         format!(
-                            "call to '{}' supplies {} argument(s), but its {} declaration requires {}",
+                            "call to '{}' supplies {} argument(s), but its {} declaration at {}:{} requires {}",
                             signature.name,
                             arguments.len(),
                             signature.declaration_kind,
+                            signature.declaration_span.line,
+                            signature.declaration_span.column,
                             signature.parameters.len()
                         ),
                         *span,
@@ -826,8 +828,11 @@ impl<'src> SemanticVerifier<'src> {
                         self.error(
                             CODE_CALL_ARGUMENT_TYPE,
                             format!(
-                                "argument for parameter '{}' in call to '{}' has type {actual_type:?}; expected {expected_type:?}",
-                                parameter.name, signature.name
+                                "argument for parameter '{}' (declared at {}:{}) in call to '{}' has type {actual_type:?}; expected {expected_type:?}",
+                                parameter.name,
+                                parameter.span.line,
+                                parameter.span.column,
+                                signature.name
                             ),
                             expression_span(argument),
                         );
