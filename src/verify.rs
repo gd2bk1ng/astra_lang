@@ -1691,6 +1691,7 @@ mod adversarial_type_propagation_tests {
 #[cfg(test)]
 mod callable_effect_context_tests {
     use super::*;
+    use crate::{Lexer, Parser, Token};
 
     fn parsed_program(source: &str) -> (Vec<Token<'_>>, Program<'_>) {
         let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
@@ -1722,6 +1723,28 @@ mod callable_effect_context_tests {
         let plain = verifier.callable_registry.get("plain").expect("plain function registered");
         assert!(plain.effects.is_empty());
         assert!(verifier.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn callable_registry_excludes_unknown_and_duplicate_effect_entries() {
+        let source = "fn filtered() effects { ReadFile, UnknownEffect, ReadFile } { }";
+        let (_tokens, program) = parsed_program(source);
+        let mut verifier = SemanticVerifier::new(source);
+        verifier.collect_callable_declarations(&program);
+
+        assert_eq!(
+            verifier.callable_registry.get("filtered").unwrap().effects,
+            BTreeSet::from([EffectId::ReadFile]),
+            "only known, unique identities may enter the callable contract"
+        );
+        assert_eq!(
+            verifier.diagnostics.iter().filter(|d| d.code == CODE_EFFECT_UNKNOWN).count(),
+            1
+        );
+        assert_eq!(
+            verifier.diagnostics.iter().filter(|d| d.code == CODE_EFFECT_DUPLICATE).count(),
+            1
+        );
     }
 
     #[test]
