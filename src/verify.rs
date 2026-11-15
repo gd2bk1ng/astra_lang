@@ -228,13 +228,19 @@ impl CapabilityInstance {
 /// The ledger owns the unique instance records and is deliberately not
 /// Clone: an independent copy of ownership state would create a second
 /// authority history and could resurrect consumed authority.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CapabilityLedger {
     instances: BTreeMap<CapabilityInstanceId, CapabilityInstance>,
     owners: BTreeSet<CapabilityOwnerId>,
     next_instance_id: u64,
     next_owner_id: u64,
-    root_owner: Option<CapabilityOwnerId>,
+    root_owner: CapabilityOwnerId,
+}
+
+impl Default for CapabilityLedger {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CapabilityLedger {
@@ -248,23 +254,24 @@ impl CapabilityLedger {
             owners,
             next_instance_id: 1,
             next_owner_id: 2,
-            root_owner: Some(root_owner),
+            root_owner,
         }
     }
 
     pub const fn root_owner(&self) -> CapabilityOwnerId {
-        match self.root_owner {
-            Some(owner) => owner,
-            None => CapabilityOwnerId(0),
-        }
+        self.root_owner
     }
 
     /// Create a distinct ownership context within this ledger.
-    pub fn create_owner(&mut self) -> CapabilityOwnerId {
+    pub fn create_owner(&mut self) -> Result<CapabilityOwnerId, CapabilityError> {
+        let owner_id = self
+            .next_owner_id
+            .checked_add(1)
+            .ok_or(CapabilityError::IdExhausted)?;
         let owner = CapabilityOwnerId(self.next_owner_id);
-        self.next_owner_id = self.next_owner_id.saturating_add(1);
+        self.next_owner_id = owner_id;
         self.owners.insert(owner);
-        owner
+        Ok(owner)
     }
 
     /// Provision a fresh authority instance.
@@ -281,8 +288,12 @@ impl CapabilityLedger {
             return Err(CapabilityError::UnknownOwner(owner));
         }
 
+        let next_id = self
+            .next_instance_id
+            .checked_add(1)
+            .ok_or(CapabilityError::IdExhausted)?;
         let id = CapabilityInstanceId(self.next_instance_id);
-        self.next_instance_id = self.next_instance_id.saturating_add(1);
+        self.next_instance_id = next_id;
 
         self.instances.insert(
             id,
@@ -353,6 +364,7 @@ impl CapabilityLedger {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityError {
+    IdExhausted,
     UnknownOwner(CapabilityOwnerId),
     UnknownInstance(CapabilityInstanceId),
     AlreadyInTransit(CapabilityInstanceId),
@@ -2123,14 +2135,7 @@ mod callable_effect_context_tests {
     }
 
     #[test]
-    fn capability_ledger_is_not_cloneable_and_authority_state_is_not_copyable() {
-        fn assert_not_clone<T: ?Sized>() {
-            let _ = std::any::type_name::<T>();
-        }
-
-        assert_not_clone::<CapabilityLedger>();
-        assert_not_clone::<CapabilityInstance>();
-
+    fn capability_ledger_keeps_authority_state_outside_copyable_ids_and_states() {
         let mut ledger = CapabilityLedger::new();
         let owner = ledger.root_owner();
         let instance = ledger
@@ -2158,5 +2163,25 @@ mod callable_effect_context_tests {
         let verifier = SemanticVerifier::new("");
         let root_owner = verifier.capability_ledger.root_owner();
         assert_eq!(root_owner.value(), 1);
+    }
+
+    #[test]
+    fn capability_owner_contexts_are_distinct_and_authoritative() {
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let child = ledger.create_owner().expect("owner allocation succeeds");
+
+        assert_ne!(root, child);
+        assert_eq!(root.value(), 1);
+        assert_eq!(child.value(), 2);
+
+        let first = ledger
+            .provision(CapabilityId::ReadFile, root, Span::new(0, 4))
+            .expect("root-owned instance provision succeeds");
+        let second = ledger
+            .provision(CapabilityId::ReadFile, child, Span::new(5, 9))
+            .expect("child-owned instance provision succeeds");
+
+        assert_ne!(ledger.instance(first).unwrap().owner(), ledger.instance(second).unwrap().owner());
     }
 }
