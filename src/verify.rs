@@ -39,6 +39,24 @@ enum ConfidenceState {
 }
 
 
+/// Separates an expression's syntactic type from whether that type is safe
+/// to expose to downstream semantic checks.
+#[derive(Debug, Clone, PartialEq)]
+struct ExpressionValidation<'src> {
+    inferred_type: SemanticType<'src>,
+    is_valid: bool,
+}
+
+impl<'src> ExpressionValidation<'src> {
+    fn validated_type(&self) -> SemanticType<'src> {
+        if self.is_valid {
+            self.inferred_type.clone()
+        } else {
+            SemanticType::Unknown
+        }
+    }
+}
+
 /// Semantic types used by the first verifier layer.
 ///
 /// Probabilistic is deliberately distinct from its underlying value type so
@@ -531,25 +549,23 @@ impl<'src> SemanticVerifier<'src> {
                 Statement::Let { name, value, span } => {
                     // Initializers are checked before declaration, so the new
                     // binding cannot resolve to itself during initialization.
-                    let inferred_type = value
-                        .as_ref()
-                        .map(|expression| self.infer_expression_type(expression))
-                        .unwrap_or(SemanticType::Unknown);
-
-                    if let Some(value) = value {
-                        self.validate_expression_types(value);
+                    let inferred_type = if let Some(value) = value {
+                        let validation = self.validate_expression_types(value);
                         let _ = self.infer_expression(value);
-                    }
+                        validation.validated_type()
+                    } else {
+                        SemanticType::Unknown
+                    };
 
                     self.register_local_binding(name, inferred_type, *span);
                 }
                 Statement::Return { value, .. } => {
-                    self.validate_expression_types(value);
-                    self.validate_return_type(value);
+                    let validation = self.validate_expression_types(value);
+                    self.validate_return_type(value, validation.is_valid);
                     let _ = self.infer_expression(value);
                 }
                 Statement::Expression { expression: value, .. } => {
-                    self.validate_expression_types(value);
+                    let _ = self.validate_expression_types(value);
                     let _ = self.infer_expression(value);
                 }
                 Statement::Backtrack { body, .. } => {
@@ -567,13 +583,16 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    fn validate_return_type(&mut self, value: &Expression<'src>) {
+    fn validate_return_type(&mut self, value: &Expression<'src>, expression_is_valid: bool) {
         let Some(expected_type) = self.expected_return_type.clone() else {
             // A callable without a declared return type has no return contract
             // to enforce. The existing expression semantics remain unchanged.
             return;
         };
 
+        if !expression_is_valid {
+            return;
+        }
         let actual_type = self.infer_expression_type(value);
 
         // Unknown or unsupported types cannot establish a mismatch. Preserve
@@ -774,39 +793,44 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    /// Validate operator operand compatibility without changing inferred types,
-    /// confidence, or epistemic binding state.
-    fn validate_expression_types(&mut self, expression: &Expression<'src>) {
+    /// Validate an expression and retain its syntactic type separately from
+    /// the type safe for downstream semantic checks.
+    fn validate_expression_types(
+        &mut self,
+        expression: &Expression<'src>,
+    ) -> ExpressionValidation<'src> {
+        let inferred_type = self.infer_expression_type(expression);
+        let mut is_valid = true;
+
         match expression {
             Expression::Unary {
                 operator,
                 operand,
                 span,
             } => {
-                self.validate_expression_types(operand);
-                let operand_type = self.infer_expression_type(operand);
-                if operand_type == SemanticType::Unknown {
-                    return;
-                }
-
-                let compatible = match operator {
-                    UnaryOp::Negate => is_numeric_type(&operand_type),
-                    UnaryOp::Not => operand_type == SemanticType::Boolean,
-                };
-
-                if !compatible {
-                    let operator_name = match operator {
-                        UnaryOp::Negate => "-",
-                        UnaryOp::Not => "!",
+                let operand_validation = self.validate_expression_types(operand);
+                let operand_type = operand_validation.validated_type();
+                if operand_type != SemanticType::Unknown {
+                    let compatible = match operator {
+                        UnaryOp::Negate => is_numeric_type(&operand_type),
+                        UnaryOp::Not => operand_type == SemanticType::Boolean,
                     };
-                    self.error(
-                        CODE_TYPE_MISMATCH,
-                        format!(
-                            "operator '{operator_name}' is not compatible with operand type {operand_type:?}"
-                        ),
-                        *span,
-                    );
+                    if !compatible {
+                        let operator_name = match operator {
+                            UnaryOp::Negate => "-",
+                            UnaryOp::Not => "!",
+                        };
+                        self.error(
+                            CODE_TYPE_MISMATCH,
+                            format!(
+                                "operator '{operator_name}' is not compatible with operand type {operand_type:?}"
+                            ),
+                            *span,
+                        );
+                        is_valid = false;
+                    }
                 }
+                is_valid &= operand_validation.is_valid;
             }
             Expression::Binary {
                 left,
@@ -814,70 +838,67 @@ impl<'src> SemanticVerifier<'src> {
                 right,
                 span,
             } => {
-                self.validate_expression_types(left);
-                self.validate_expression_types(right);
+                let left_validation = self.validate_expression_types(left);
+                let right_validation = self.validate_expression_types(right);
+                let left_type = left_validation.validated_type();
+                let right_type = right_validation.validated_type();
 
-                let left_type = self.infer_expression_type(left);
-                let right_type = self.infer_expression_type(right);
+                if left_type != SemanticType::Unknown && right_type != SemanticType::Unknown {
+                    let compatible = match operator {
+                        BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide => {
+                            is_numeric_type(&left_type) && is_numeric_type(&right_type)
+                        }
+                        BinaryOp::And | BinaryOp::Or => {
+                            left_type == SemanticType::Boolean
+                                && right_type == SemanticType::Boolean
+                        }
+                        BinaryOp::Equal | BinaryOp::NotEqual => {
+                            left_type == right_type
+                                || (is_numeric_type(&left_type) && is_numeric_type(&right_type))
+                        }
+                        BinaryOp::Less
+                        | BinaryOp::LessEqual
+                        | BinaryOp::Greater
+                        | BinaryOp::GreaterEqual => {
+                            is_numeric_type(&left_type) && is_numeric_type(&right_type)
+                        }
+                    };
 
-                // Unknown means compatibility cannot yet be established. Do not
-                // emit a secondary diagnostic for an unresolved operand.
-                if left_type == SemanticType::Unknown || right_type == SemanticType::Unknown {
-                    return;
+                    if !compatible {
+                        self.error(
+                            CODE_TYPE_MISMATCH,
+                            format!(
+                                "operator '{}' is not compatible with operand types {left_type:?} and {right_type:?}",
+                                binary_operator_name(*operator)
+                            ),
+                            *span,
+                        );
+                        is_valid = false;
+                    }
                 }
-
-                let compatible = match operator {
-                    BinaryOp::Add
-                    | BinaryOp::Subtract
-                    | BinaryOp::Multiply
-                    | BinaryOp::Divide => {
-                        is_numeric_type(&left_type) && is_numeric_type(&right_type)
-                    }
-                    BinaryOp::And | BinaryOp::Or => {
-                        left_type == SemanticType::Boolean
-                            && right_type == SemanticType::Boolean
-                    }
-                    BinaryOp::Equal | BinaryOp::NotEqual => {
-                        left_type == right_type
-                            || (is_numeric_type(&left_type) && is_numeric_type(&right_type))
-                    }
-                    BinaryOp::Less
-                    | BinaryOp::LessEqual
-                    | BinaryOp::Greater
-                    | BinaryOp::GreaterEqual => {
-                        is_numeric_type(&left_type) && is_numeric_type(&right_type)
-                    }
-                };
-
-                if !compatible {
-                    self.error(
-                        CODE_TYPE_MISMATCH,
-                        format!(
-                            "operator '{}' is not compatible with operand types {left_type:?} and {right_type:?}",
-                            binary_operator_name(*operator)
-                        ),
-                        *span,
-                    );
-                }
+                is_valid &= left_validation.is_valid && right_validation.is_valid;
             }
             Expression::Call {
                 callee,
                 arguments,
                 span,
             } => {
-                self.validate_expression_types(callee);
+                let callee_validation = self.validate_expression_types(callee);
+                let mut arguments_valid = true;
                 for argument in arguments {
-                    self.validate_expression_types(argument);
+                    let validation = self.validate_expression_types(argument);
+                    arguments_valid &= validation.is_valid;
                 }
+                is_valid &= callee_validation.is_valid && arguments_valid;
 
                 let Expression::Identifier(name, _) = callee.as_ref() else {
-                    return;
+                    return ExpressionValidation { inferred_type, is_valid };
                 };
                 let Some(signature) = self.callable_registry.get(name).cloned() else {
-                    // Unregistered and computed callees retain the existing
-                    // permissive behavior; built-ins are handled separately
-                    // by the confidence/effect verifier.
-                    return;
+                    return ExpressionValidation { inferred_type, is_valid };
                 };
 
                 if arguments.len() != signature.parameters.len() {
@@ -894,14 +915,14 @@ impl<'src> SemanticVerifier<'src> {
                         ),
                         *span,
                     );
+                    is_valid = false;
                 }
 
                 for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
-                    let actual_type = self.infer_expression_type(argument);
+                    let actual_validation = self.validate_expression_types_for_type_only(argument);
+                    let actual_type = actual_validation;
                     let expected_type = semantic_type_from_name(parameter.type_name);
 
-                    // Unknown or unsupported types do not produce speculative
-                    // argument diagnostics or cascades.
                     if actual_type == SemanticType::Unknown
                         || expected_type == SemanticType::Unknown
                     {
@@ -920,21 +941,32 @@ impl<'src> SemanticVerifier<'src> {
                             ),
                             expression_span(argument),
                         );
+                        is_valid = false;
                     }
                 }
             }
             Expression::SelfModify { patch, .. } => {
-                self.validate_expression_types(patch);
+                let validation = self.validate_expression_types(patch);
+                is_valid &= validation.is_valid;
             }
             // Expression blocks are visited by infer_expression(), which
-            // enters their lexical scope and invokes verify_block(). That
-            // block traversal performs this validation for each contained
-            // statement without duplicating scope registration or diagnostics.
+            // enters their lexical scope and invokes verify_block().
             Expression::Block(_) => {}
             Expression::Identifier(_, _)
             | Expression::Literal(_, _)
             | Expression::Symbolic { .. } => {}
         }
+
+        ExpressionValidation { inferred_type, is_valid }
+    }
+
+    /// Return a child's validated type without re-emitting its diagnostics.
+    /// This helper is only used after the caller has recursively validated it.
+    fn validate_expression_types_for_type_only(
+        &self,
+        expression: &Expression<'src>,
+    ) -> SemanticType<'src> {
+        self.infer_expression_type(expression)
     }
 
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
