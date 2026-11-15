@@ -531,3 +531,113 @@ fn nested_call_diagnostics_are_unique_stable_and_source_bounded() {
     assert_eq!(source.get(span.start..span.end), Some("true && 1"));
 }
 
+
+
+#[test]
+fn intent_owned_blocks_validate_operator_compatibility() {
+    let source = concat!(
+        "intent mission {\n",
+        "  workspace {\n",
+        "    let invalid_logical = true && 1;\n",
+        "    return -true;\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    let mismatches: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2301")
+        .collect();
+    assert_eq!(
+        mismatches.len(),
+        2,
+        "each incompatible operator inside an intent block must be checked once: {:?}",
+        report.diagnostics
+    );
+    assert!(mismatches.iter().any(|diagnostic| {
+        source.get(diagnostic.span.start..diagnostic.span.end) == Some("true && 1")
+    }));
+    assert!(mismatches.iter().any(|diagnostic| {
+        source.get(diagnostic.span.start..diagnostic.span.end) == Some("-true")
+    }));
+}
+
+#[test]
+fn nested_expression_blocks_inside_intent_blocks_are_verified_once() {
+    let source = concat!(
+        "intent mission {\n",
+        "  workspace {\n",
+        "    let result = { let invalid = true && 1; };\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    let mismatches: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2301")
+        .collect();
+    assert_eq!(
+        mismatches.len(),
+        1,
+        "nested expression block must be traversed exactly once: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        source.get(mismatches[0].span.start..mismatches[0].span.end),
+        Some("true && 1")
+    );
+}
+
+#[test]
+fn intent_owned_blocks_isolate_bindings_and_preserve_nested_shadowing() {
+    let source = concat!(
+        "intent mission {\n",
+        "  workspace {\n",
+        "    let signal = 1;\n",
+        "    backtrack { let signal = true; }\n",
+        "    let result = signal;\n",
+        "  }\n",
+        "  another_workspace { let signal = 2; }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "intent blocks must isolate sibling bindings and preserve nested shadowing: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn duplicate_bindings_inside_intent_owned_blocks_are_rejected() {
+    let source = concat!(
+        "intent mission {\n",
+        "  workspace {\n",
+        "    let signal = 1;\n",
+        "    let signal = 2;\n",
+        "  }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    let duplicates: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2003")
+        .collect();
+    assert_eq!(
+        duplicates.len(),
+        1,
+        "duplicate local binding inside intent block must be diagnosed once: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        source.get(duplicates[0].span.start..duplicates[0].span.end),
+        Some("let signal = 2;")
+    );
+}
