@@ -532,7 +532,6 @@ fn nested_call_diagnostics_are_unique_stable_and_source_bounded() {
 }
 
 
-
 #[test]
 fn intent_owned_blocks_validate_operator_compatibility() {
     let source = concat!(
@@ -639,5 +638,23 @@ fn duplicate_bindings_inside_intent_owned_blocks_are_rejected() {
     assert_eq!(
         source.get(duplicates[0].span.start..duplicates[0].span.end),
         Some("let signal = 2;")
+    );
+}
+
+
+#[test]
+fn intent_owned_blocks_inherit_declared_effects() {
+    let source = concat!(
+        "intent mission {\n",
+        "  effects { DispatchNetworkCommand }\n",
+        "  workspace { dispatch_network_command(); }\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "intent-owned blocks must inherit the enclosing intent's declared effects: {:?}",
+        report.diagnostics
     );
 }
