@@ -830,3 +830,140 @@ fn callable_arity_mismatch_rejects_extra_arguments() {
     assert!(diagnostics[0].message.contains("2 argument"));
     assert!(diagnostics[0].message.contains("requires 1"));
 }
+
+#[test]
+fn return_contract_rejects_function_value_type_mismatch() {
+    let source = "fn calculate() -> Integer { return \"wrong\"; }";
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2501")
+        .expect("function return type mismatch must be diagnosed");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("\"wrong\"")
+    );
+    assert!(diagnostic.message.contains("String"));
+    assert!(diagnostic.message.contains("Integer"));
+}
+
+#[test]
+fn return_contract_rejects_rule_value_type_mismatch() {
+    let source = "rule calculate() -> Boolean { return 1; }";
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2501")
+        .expect("rule return type mismatch must be diagnosed");
+
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("1")
+    );
+    assert!(diagnostic.message.contains("Integer"));
+    assert!(diagnostic.message.contains("Boolean"));
+}
+
+#[test]
+fn return_contract_allows_existing_numeric_compatibility() {
+    let source = concat!(
+        "fn calculate() -> Float {
+",
+        "  return 1;
+",
+        "}
+",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.is_success(),
+        "Integer should be compatible with a declared Float return type: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_contract_suppresses_unknown_type_cascades() {
+    let source = "fn calculate() -> Integer { return unresolved_signal; }";
+    let report = verify(source);
+
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2501"),
+        "unknown return types must suppress speculative mismatch diagnostics: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn return_contract_is_inherited_by_nested_backtrack_blocks() {
+    let source = concat!(
+        "fn calculate() -> Integer {
+",
+        "  backtrack {
+",
+        "    return \"wrong\";
+",
+        "  }
+",
+        "}
+",
+    );
+    let report = verify(source);
+
+    let diagnostics: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2501")
+        .collect();
+
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "nested backtrack return must be checked exactly once: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        source.get(diagnostics[0].span.start..diagnostics[0].span.end),
+        Some("\"wrong\"")
+    );
+}
+
+#[test]
+fn return_contract_is_inherited_by_nested_expression_blocks() {
+    let source = concat!(
+        "fn calculate() -> Integer {
+",
+        "  return {
+",
+        "    return \"wrong\";
+",
+        "  };
+",
+        "}
+",
+    );
+    let report = verify(source);
+
+    let diagnostics: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2501")
+        .collect();
+
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "nested expression-block return must be checked exactly once: {:?}",
+        report.diagnostics
+    );
+    assert_eq!(
+        source.get(diagnostics[0].span.start..diagnostics[0].span.end),
+        Some("\"wrong\"")
+    );
+}
