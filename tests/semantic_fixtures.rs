@@ -1132,3 +1132,82 @@ fn genuinely_unknown_initializer_remains_distinct_from_invalid_expression() {
         report.diagnostics
     );
 }
+
+#[test]
+fn lexical_value_binding_shadows_global_callable_and_reports_non_callable_callee() {
+    let source = concat!(
+        "fn calculate(value: Integer) -> Integer { return value; }\n",
+        "fn caller() {\n",
+        "  let calculate = 10;\n",
+        "  calculate(2);\n",
+        "}\n",
+    );
+    let report = verify(source);
+
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "SYN2404")
+        .expect("a local value must shadow the global callable");
+    assert_eq!(
+        source.get(diagnostic.span.start..diagnostic.span.end),
+        Some("calculate")
+    );
+    assert!(
+        !report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "SYN2402" || diagnostic.code == "SYN2403"
+        }),
+        "the shadowed global signature must not be used for call validation: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn lexical_parameter_binding_shadows_global_callable() {
+    let source = concat!(
+        "fn calculate(value: Integer) -> Integer { return value; }\n",
+        "fn caller(calculate: Integer) { calculate(); }\n",
+    );
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2404"),
+        "a parameter binding must take precedence over a global callable: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn user_callable_declarations_cannot_redefine_reserved_builtins() {
+    let source = concat!(
+        "fn resolve() { }\n",
+        "rule assert() { }\n",
+        "fn dispatch_network_command() { }\n",
+        "fn SelfModify() { }\n",
+    );
+    let report = verify(source);
+
+    let reserved: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "SYN2405")
+        .collect();
+    assert_eq!(
+        reserved.len(),
+        4,
+        "every user declaration colliding with a reserved built-in must be rejected: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn local_value_can_shadow_builtin_name_but_cannot_be_called() {
+    let source = "fn caller() { let resolve = 1; resolve(2); }";
+    let report = verify(source);
+
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2404"),
+        "lexical value precedence applies to built-in names as well: {:?}",
+        report.diagnostics
+    );
+}
