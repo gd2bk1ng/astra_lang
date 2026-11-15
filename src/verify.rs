@@ -27,6 +27,8 @@ const CODE_TYPE_MISMATCH: &str = "SYN2301";
 const CODE_CALLABLE_DUPLICATE: &str = "SYN2401";
 const CODE_CALL_ARITY: &str = "SYN2402";
 const CODE_CALL_ARGUMENT_TYPE: &str = "SYN2403";
+const CODE_CALL_NON_CALLABLE: &str = "SYN2404";
+const CODE_CALLABLE_RESERVED_BUILTIN: &str = "SYN2405";
 const CODE_RETURN_TYPE_MISMATCH: &str = "SYN2501";
 const CODE_MISSING_RETURN: &str = "SYN2502";
 
@@ -275,6 +277,14 @@ impl<'src> SemanticVerifier<'src> {
                 let name = signature.name;
                 let kind = signature.declaration_kind;
                 let span = signature.declaration_span;
+                if is_reserved_builtin_name(name) {
+                    self.error(
+                        CODE_CALLABLE_RESERVED_BUILTIN,
+                        format!("callable '{name}' is reserved for a built-in operation and cannot be declared by user code"),
+                        span,
+                    );
+                    continue;
+                }
                 if !self.callable_registry.register(signature) {
                     self.error(
                         CODE_CALLABLE_DUPLICATE,
@@ -669,7 +679,9 @@ impl<'src> SemanticVerifier<'src> {
                     });
                 }
 
-                if let Some(name) = callee_name {
+                if let Some(name) = callee_name
+                    && self.epistemic_environment.lookup(name).is_none()
+                {
                     self.verify_effect_for_operation(name, *span);
 
                     if is_resolution_operation(name) {
@@ -894,9 +906,24 @@ impl<'src> SemanticVerifier<'src> {
                 is_valid &= callee_validation.is_valid
                     && argument_validations.iter().all(|result| result.is_valid);
 
-                let Expression::Identifier(name, _) = callee.as_ref() else {
+                let Expression::Identifier(name, callee_span) = callee.as_ref() else {
                     return ExpressionValidation { inferred_type, is_valid };
                 };
+
+                // Lexical values shadow global callables and built-ins. A value
+                // binding is not callable in the current language model.
+                if self.epistemic_environment.lookup(name).is_some() {
+                    self.error(
+                        CODE_CALL_NON_CALLABLE,
+                        format!("local binding '{name}' shadows the global callable namespace but is not callable"),
+                        *callee_span,
+                    );
+                    return ExpressionValidation {
+                        inferred_type,
+                        is_valid: false,
+                    };
+                }
+
                 let Some(signature) = self.callable_registry.get(name).cloned() else {
                     return ExpressionValidation { inferred_type, is_valid };
                 };
@@ -1200,6 +1227,24 @@ fn binary_operator_name(operator: BinaryOp) -> &'static str {
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
     }
+}
+
+fn is_reserved_builtin_name(name: &str) -> bool {
+    matches!(
+        name,
+        "resolve"
+            | "resolve_confidence"
+            | "assert_confidence"
+            | "deterministic_gate"
+            | "control_gate"
+            | "assert"
+            | "allocate_memory"
+            | "dispatch_network_command"
+            | "write_file"
+            | "read_file"
+            | "spawn_process"
+            | "SelfModify"
+    )
 }
 
 fn is_resolution_operation(name: &str) -> bool {
