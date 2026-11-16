@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use SyntraLang in research or software, please cite the repository."
+title: "SyntraLang"
+type: software
+authors:
+  - family-names: Roussinov
+    given-names: Alex
+repository-code: "https://github.com/gd2bk1ng/syntra_lang"
+abstract: >-
+  SyntraLang is an experimental, intent-oriented language foundation exploring
+  explicit representations for goals, effects, uncertainty, and governance
+  alongside ordinary computation.
+keywords:
+  - programming languages
+  - Rust
+  - language design
+  - artificial intelligence
+  - cognitive systems
+license: "MIT OR Apache-2.0"
