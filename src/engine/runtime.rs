@@ -68,7 +68,7 @@ impl CoordinatorPrivilegeToken {
 #[derive(Debug)]
 struct RuntimeInvocationRegistry {
     id: RegistryId,
-    next_invocation_id: u64,
+    next_invocation_id: Option<u64>,
     records: BTreeMap<InvocationId, RuntimeInvocationRecord>,
 }
 
@@ -79,14 +79,16 @@ impl RuntimeInvocationRegistry {
             .map_err(|_| RuntimeError::RegistryIdExhausted)?;
         Ok(Self {
             id: RegistryId(id),
-            next_invocation_id: 1,
+            next_invocation_id: Some(1),
             records: BTreeMap::new(),
         })
     }
 
     fn allocate_id(&mut self) -> Result<InvocationId, RuntimeError> {
-        let value = self.next_invocation_id;
-        self.next_invocation_id = value.checked_add(1).ok_or(RuntimeError::InvocationIdExhausted)?;
+        let value = self.next_invocation_id.ok_or(RuntimeError::InvocationIdExhausted)?;
+        // Preserve the full u64 identity space: None means the maximum ID was
+        // already issued and no further invocation can be allocated.
+        self.next_invocation_id = value.checked_add(1);
         Ok(InvocationId(value))
     }
 
@@ -143,7 +145,10 @@ impl RuntimeInvocationRegistry {
             }
         }
 
-        self.records.get_mut(&id).expect("record checked above").state = to;
+        let Some(record) = self.records.get_mut(&id) else {
+            return Err(RuntimeError::UnknownInvocation(id));
+        };
+        record.state = to;
         Ok(())
     }
 
@@ -269,6 +274,21 @@ mod tests {
         );
         coordinator.return_invocation(child).unwrap();
         coordinator.return_invocation(root).unwrap();
+    }
+
+
+    #[test]
+    fn invocation_allocator_issues_maximum_id_once_then_exhausts() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        coordinator.registry.next_invocation_id = Some(u64::MAX);
+
+        let final_id = coordinator.prepare_root().unwrap();
+        assert_eq!(final_id.value(), u64::MAX);
+        assert_eq!(
+            coordinator.prepare_root(),
+            Err(RuntimeError::InvocationIdExhausted)
+        );
+        assert_eq!(coordinator.invocations().count(), 1);
     }
 
     #[test]
