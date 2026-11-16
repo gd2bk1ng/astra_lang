@@ -20,8 +20,9 @@ pub mod verify;
 
 pub use ast::*;
 pub use capability_transfer::{
-    build_static_transfer_plan, CapabilityPrecommitError, CapabilityTransferItem,
-    CapabilityTransferPlan, CapabilityParameterSpec, IndexedCapabilityParameter,
+    build_static_transfer_plan, CapabilityOwnerContext, CapabilityParameterSpec,
+    CapabilityPrecommitError, CapabilityTransferItem, CapabilityTransferPlan,
+    CapabilityTransferSource, IndexedCapabilityParameter,
 };
 pub use epistemic::*;
 pub use invariants::*;
