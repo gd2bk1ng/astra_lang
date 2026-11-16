@@ -15,8 +15,11 @@ TopLevelDecl ::= FunctionDecl
 FunctionDecl ::= [GradAnnotation] "fn" Identifier "(" [ParamList] ")" [EffectsClause] ["->" Type] Block
 GradAnnotation ::= "@" "grad"
 
-ParamList ::= Param { "," Param }
-Param ::= Identifier ":" Type
+ParamList ::= Parameter { "," Parameter }
+Parameter ::= ValueParameter | CapabilityParameter
+ValueParameter ::= Identifier ":" Type
+CapabilityParameter ::= Identifier ":" "Cap" "<" CapabilityKind ">"
+CapabilityKind ::= Identifier
 
 IntentDecl ::= "intent" Identifier "{" { IntentMember } "}"
 IntentMember ::= IntentField
@@ -74,6 +77,7 @@ Annotation ::= "::" Identifier [ "(" [AnnotationArgs] ")" ]
 AnnotationArgs ::= Expression { "," Expression }
 
 Expression ::= Literal
+             | MoveExpression
              | Identifier
              | FunctionCall
              | LambdaExpr
@@ -108,6 +112,7 @@ UnaryOp ::= "-" | "!"
 
 SymbolicExpr ::= "symbolic" "(" Identifier ")"
 SelfModifyExpr ::= "modify" "(" Identifier "," Expression ")"
+MoveExpression ::= "move" Identifier
 
 Type ::= BaseType
        | TypeVar

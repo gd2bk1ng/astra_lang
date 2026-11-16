@@ -89,7 +89,20 @@ pub enum GovernanceMember<'a> {
 pub struct Rule<'a> { pub name: &'a str, pub params: Vec<Parameter<'a>>, pub effects: Option<Effects<'a>>, pub return_type: Option<TypeRef<'a>>, pub body: Block<'a>, pub span: Span }
 
 #[derive(Debug, PartialEq)]
-pub struct Parameter<'a> { pub name: &'a str, pub ty: TypeRef<'a>, pub span: Span }
+pub struct Parameter<'a> { pub name: &'a str, pub kind: ParameterKind<'a>, pub span: Span }
+
+#[derive(Debug, PartialEq)]
+pub enum ParameterKind<'a> {
+    Value { ty: TypeRef<'a> },
+    Capability { capability: CapabilityParameterSyntax<'a> },
+}
+
+/// Unresolved capability parameter syntax, preserving source spelling and span.
+#[derive(Debug, PartialEq)]
+pub struct CapabilityParameterSyntax<'a> {
+    pub capability_name: &'a str,
+    pub span: Span,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct TypeRef<'a> { pub name: &'a str, pub arguments: Vec<TypeRef<'a>>, pub span: Span }
@@ -104,7 +117,7 @@ pub enum Statement<'a> { Let { name: &'a str, value: Option<Expression<'a>>, spa
 pub struct Annotation<'a> { pub name: &'a str, pub arguments: Vec<Expression<'a>>, pub span: Span }
 
 #[derive(Debug, PartialEq)]
-pub enum Expression<'a> { Identifier(&'a str, Span), Literal(Literal<'a>, Span), Call { callee: Box<Expression<'a>>, arguments: Vec<Expression<'a>>, span: Span }, Unary { operator: UnaryOp, operand: Box<Expression<'a>>, span: Span }, Binary { left: Box<Expression<'a>>, operator: BinaryOp, right: Box<Expression<'a>>, span: Span }, Block(Block<'a>), Symbolic { identifier: &'a str, span: Span }, SelfModify { target: &'a str, patch: Box<Expression<'a>>, span: Span } }
+pub enum Expression<'a> { Identifier(&'a str, Span), Literal(Literal<'a>, Span), Call { callee: Box<Expression<'a>>, arguments: Vec<Expression<'a>>, span: Span }, Move { value: Box<Expression<'a>>, span: Span }, Unary { operator: UnaryOp, operand: Box<Expression<'a>>, span: Span }, Binary { left: Box<Expression<'a>>, operator: BinaryOp, right: Box<Expression<'a>>, span: Span }, Block(Block<'a>), Symbolic { identifier: &'a str, span: Span }, SelfModify { target: &'a str, patch: Box<Expression<'a>>, span: Span } }
 
 #[derive(Debug, PartialEq)]
 pub enum Literal<'a> { Integer(i64), Float(f64), String(&'a str), Boolean(bool) }

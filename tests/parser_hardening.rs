@@ -162,7 +162,7 @@ fn nested_generic_type_arguments_preserve_borrowed_names() {
         panic!("expected function");
     };
 
-    let ty = &function.params[0].ty;
+    let syntra_lang::ParameterKind::Value { ty } = &function.params[0].kind else { panic!("expected ordinary parameter"); };
     assert_eq!(ty.name, "Map");
     assert_eq!(ty.arguments.len(), 2);
     assert_eq!(ty.arguments[0].name, "String");

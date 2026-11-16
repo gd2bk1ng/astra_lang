@@ -10,6 +10,7 @@ pub enum AstInvariantKind {
     ContainmentViolation,
     SiblingOrderViolation,
     EmptyNodeSpan,
+    InvalidMoveTarget,
 }
 
 /// A single structural invariant violation.
@@ -149,6 +150,13 @@ impl<'src> Validator<'src> {
             previous = Some(parameter.span);
         }
 
+        if let Some(effects) = &function.effects {
+            self.validate_effects(effects);
+            self.check_containment(parent, effects.span, "effects clause", "function");
+            self.check_sibling_order(previous, effects.span, "function signature members");
+            previous = Some(effects.span);
+        }
+
         if let Some(return_type) = &function.return_type {
             self.validate_type_ref(return_type);
             self.check_containment(parent, return_type.span, "return type", "function");
@@ -172,6 +180,13 @@ impl<'src> Validator<'src> {
             previous = Some(parameter.span);
         }
 
+        if let Some(effects) = &rule.effects {
+            self.validate_effects(effects);
+            self.check_containment(parent, effects.span, "effects clause", "rule");
+            self.check_sibling_order(previous, effects.span, "rule signature members");
+            previous = Some(effects.span);
+        }
+
         if let Some(return_type) = &rule.return_type {
             self.validate_type_ref(return_type);
             self.check_containment(parent, return_type.span, "return type", "rule");
@@ -186,8 +201,16 @@ impl<'src> Validator<'src> {
 
     fn validate_parameter(&mut self, parameter: &Parameter<'src>) {
         self.check_span(parameter.span, "parameter", true);
-        self.validate_type_ref(&parameter.ty);
-        self.check_containment(parameter.span, parameter.ty.span, "parameter type", "parameter");
+        match &parameter.kind {
+            ParameterKind::Value { ty } => {
+                self.validate_type_ref(ty);
+                self.check_containment(parameter.span, ty.span, "parameter type", "parameter");
+            }
+            ParameterKind::Capability { capability } => {
+                self.check_span(capability.span, "capability parameter kind", true);
+                self.check_containment(parameter.span, capability.span, "capability parameter kind", "parameter");
+            }
+        }
     }
 
     fn validate_type_ref(&mut self, type_ref: &TypeRef<'src>) {
@@ -380,6 +403,14 @@ impl<'src> Validator<'src> {
             | Expression::Literal(_, _)
             | Expression::Symbolic { .. } => {}
 
+            Expression::Move { value, .. } => {
+                self.validate_expression(value);
+                self.check_containment(span, value.span(), "move target", "move expression");
+                if !matches!(value.as_ref(), Expression::Identifier(_, _)) {
+                    self.error(AstInvariantKind::InvalidMoveTarget, value.span(), "move expression target must be a direct identifier");
+                }
+            }
+
             Expression::Call { callee, arguments, .. } => {
                 self.validate_expression(callee);
                 self.check_containment(span, callee.span(), "call callee", "call");
@@ -451,6 +482,7 @@ impl AstSpan for Expression<'_> {
             | Expression::Literal(_, span)
             | Expression::Symbolic { span, .. }
             | Expression::SelfModify { span, .. }
+            | Expression::Move { span, .. }
             | Expression::Unary { span, .. }
             | Expression::Binary { span, .. }
             | Expression::Call { span, .. } => *span,

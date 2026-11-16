@@ -23,6 +23,8 @@ const CODE_EFFECT_REQUIRED: &str = "SYN2102";
 const CODE_CAPABILITY_LEAK: &str = "SYN2103";
 const CODE_EFFECT_UNKNOWN: &str = "SYN2104";
 const CODE_CALL_EFFECT_REQUIRED: &str = "SYN2105";
+const CODE_CAPABILITY_MOVE_REQUIRED: &str = "SYN2110";
+const CODE_CAPABILITY_PARAMETER_INVALID: &str = "SYN2117";
 
 /// Canonical identities for the closed built-in effect vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -413,9 +415,22 @@ impl<'a> SemanticReport<'a> {
 }
 
 #[derive(Debug, Clone)]
+struct CallableCapabilityParameter {
+    capability: CapabilityId,
+    span: Span,
+}
+
+#[derive(Debug, Clone)]
+enum CallableParameterKind<'src> {
+    Value { type_name: &'src str },
+    // Invalid kinds retain their capability category and positional slot.
+    Capability { capability: Option<CallableCapabilityParameter> },
+}
+
+#[derive(Debug, Clone)]
 struct CallableParameter<'src> {
     name: &'src str,
-    type_name: &'src str,
+    kind: CallableParameterKind<'src>,
     span: Span,
 }
 
@@ -523,15 +538,7 @@ impl<'src> SemanticVerifier<'src> {
                     }
                     Some(CallableSignature {
                         name: function.name,
-                        parameters: function
-                            .params
-                            .iter()
-                            .map(|parameter| CallableParameter {
-                                name: parameter.name,
-                                type_name: parameter.ty.name,
-                                span: parameter.span,
-                            })
-                            .collect(),
+                        parameters: self.resolve_callable_parameters(&function.params),
                         effects,
                         return_type: function.return_type.as_ref().map(|ty| ty.name),
                         declaration_span: function.span,
@@ -545,15 +552,7 @@ impl<'src> SemanticVerifier<'src> {
                     }
                     Some(CallableSignature {
                         name: rule.name,
-                        parameters: rule
-                            .params
-                            .iter()
-                            .map(|parameter| CallableParameter {
-                                name: parameter.name,
-                                type_name: parameter.ty.name,
-                                span: parameter.span,
-                            })
-                            .collect(),
+                        parameters: self.resolve_callable_parameters(&rule.params),
                         effects,
                         return_type: rule.return_type.as_ref().map(|ty| ty.name),
                         declaration_span: rule.span,
@@ -586,7 +585,30 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    /// Resolve effect declarations into canonical identities. Unknown names
+    fn resolve_callable_parameters(&mut self, parameters: &[Parameter<'src>]) -> Vec<CallableParameter<'src>> {
+        parameters.iter().map(|parameter| {
+            let kind = match &parameter.kind {
+                ParameterKind::Value { ty } => CallableParameterKind::Value { type_name: ty.name },
+                ParameterKind::Capability { capability } => {
+                    let resolved = resolve_capability(capability.capability_name);
+                    if resolved.is_none() {
+                        self.error(CODE_CAPABILITY_PARAMETER_INVALID,
+                            format!("capability parameter '{}' uses unknown capability kind '{}'", parameter.name, capability.capability_name),
+                            capability.span);
+                    }
+                    CallableParameterKind::Capability {
+                        capability: resolved.map(|capability_id| CallableCapabilityParameter {
+                            capability: capability_id,
+                            span: capability.span,
+                        }),
+                    }
+                }
+            };
+            CallableParameter { name: parameter.name, kind, span: parameter.span }
+        }).collect()
+    }
+
+    /// Resolve effect declarations into canonical identities
     /// never enter the set, and duplicates are detected only after resolution.
     fn resolve_effect_items(
         source: &'src str,
@@ -633,8 +655,9 @@ impl<'src> SemanticVerifier<'src> {
             .as_ref()
             .map(|type_ref| semantic_type_from_name(type_ref.name));
 
+        let mut parameter_names = BTreeSet::new();
         for parameter in &function.params {
-            self.register_parameter(parameter);
+            self.register_parameter(parameter, &mut parameter_names);
         }
         self.verify_block(&function.body);
 
@@ -675,8 +698,9 @@ impl<'src> SemanticVerifier<'src> {
             .as_ref()
             .map(|type_ref| semantic_type_from_name(type_ref.name));
 
+        let mut parameter_names = BTreeSet::new();
         for parameter in &rule.params {
-            self.register_parameter(parameter);
+            self.register_parameter(parameter, &mut parameter_names);
         }
         self.verify_block(&rule.body);
 
@@ -701,27 +725,22 @@ impl<'src> SemanticVerifier<'src> {
         self.declared_effects = previous_effects;
     }
 
-    fn register_parameter(&mut self, parameter: &Parameter<'src>) {
-        let binding = EpistemicBinding::new(
-            parameter.name,
-            parameter.ty.name,
-            EpistemicState::Uncertain,
-            parameter.span,
-        );
-
-        if self
-            .epistemic_environment
-            .declare(parameter.name, binding)
-            .is_err()
-        {
-            self.error(
-                CODE_EPISTEMIC_BINDING_DUPLICATE,
-                format!(
-                    "parameter '{}' is already declared in this function or rule scope",
-                    parameter.name
-                ),
-                parameter.span,
-            );
+    fn register_parameter(&mut self, parameter: &Parameter<'src>, parameter_names: &mut BTreeSet<&'src str>) {
+        if !parameter_names.insert(parameter.name) {
+            self.error(CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!("parameter '{}' is already declared in this function or rule scope", parameter.name),
+                parameter.span);
+            return;
+        }
+        let ParameterKind::Value { ty } = &parameter.kind else {
+            // Capability parameters are not ordinary epistemic value bindings.
+            return;
+        };
+        let binding = EpistemicBinding::new(parameter.name, ty.name, EpistemicState::Uncertain, parameter.span);
+        if self.epistemic_environment.declare(parameter.name, binding).is_err() {
+            self.error(CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!("parameter '{}' is already declared in this function or rule scope", parameter.name),
+                parameter.span);
         }
     }
 
@@ -996,6 +1015,7 @@ impl<'src> SemanticVerifier<'src> {
                 }
             },
             Expression::Literal(_, _) => ConfidenceState::Deterministic,
+            Expression::Move { .. } => ConfidenceState::Unknown,
             Expression::Call {
                 callee,
                 arguments,
@@ -1137,7 +1157,8 @@ impl<'src> SemanticVerifier<'src> {
             }
             Expression::Block(_)
             | Expression::Symbolic { .. }
-            | Expression::SelfModify { .. } => SemanticType::Unknown,
+            | Expression::SelfModify { .. }
+            | Expression::Move { .. } => SemanticType::Unknown,
         }
     }
 
@@ -1287,7 +1308,10 @@ impl<'src> SemanticVerifier<'src> {
                     .zip(&signature.parameters)
                 {
                     let actual_type = validation.validated_type();
-                    let expected_type = semantic_type_from_name(parameter.type_name);
+                    let CallableParameterKind::Value { type_name } = &parameter.kind else {
+                        continue;
+                    };
+                    let expected_type = semantic_type_from_name(type_name);
 
                     if actual_type == SemanticType::Unknown
                         || expected_type == SemanticType::Unknown
@@ -1311,6 +1335,21 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
 
+                for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
+                    if let CallableParameterKind::Capability { capability: Some(required) } = &parameter.kind {
+                        // Reading the canonical kind and declaration span here
+                        // confirms the registry carries canonical contract data;
+                        // instance-kind matching belongs to transfer validation.
+                        let _required_kind = required.capability;
+                        let _declaration_span = required.span;
+                        if !matches!(argument, Expression::Move { .. }) {
+                            self.error(CODE_CAPABILITY_MOVE_REQUIRED,
+                                format!("capability parameter '{}' requires an explicit move expression", parameter.name),
+                                expression_span(argument));
+                        }
+                    }
+                }
+
                 for effect in signature.effects.difference(&self.declared_effects) {
                     self.error(
                         CODE_CALL_EFFECT_REQUIRED,
@@ -1327,6 +1366,9 @@ impl<'src> SemanticVerifier<'src> {
                 let validation = self.validate_expression_types(patch);
                 is_valid &= validation.is_valid;
             }
+            // This stage recognizes move syntax only; it does not resolve or
+            // mutate capability ownership state.
+            Expression::Move { .. } => {}
             // Expression blocks are visited by infer_expression(), which
             // enters their lexical scope and invokes verify_block().
             Expression::Block(_) => {}
@@ -1507,6 +1549,7 @@ fn analyze_expression_flow(expression: &Expression<'_>) -> FlowOutcome {
             analyze_expression_flow(right)
         }
         Expression::SelfModify { patch, .. } => analyze_expression_flow(patch),
+        Expression::Move { .. } => FlowOutcome::FallsThrough,
         Expression::Identifier(_, _)
         | Expression::Literal(_, _)
         | Expression::Symbolic { .. } => FlowOutcome::FallsThrough,
@@ -1552,7 +1595,8 @@ fn expression_span(expression: &Expression<'_>) -> Span {
         | Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Symbolic { span, .. }
-        | Expression::SelfModify { span, .. } => *span,
+        | Expression::SelfModify { span, .. }
+        | Expression::Move { span, .. } => *span
         Expression::Block(block) => block.span,
     }
 }

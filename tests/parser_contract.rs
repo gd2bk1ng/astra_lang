@@ -18,8 +18,9 @@ fn parser_builds_borrowed_function_ast() {
     assert_eq!(function.name, "add");
     assert_eq!(function.params.len(), 2);
     assert_eq!(function.params[0].name, "x");
-    assert_eq!(function.params[0].ty.name, "Int");
-    assert_eq!(function.params[0].ty.arguments[0].name, "64");
+    let syntra_lang::ParameterKind::Value { ty } = &function.params[0].kind else { panic!("expected ordinary value parameter"); };
+    assert_eq!(ty.name, "Int");
+    assert_eq!(ty.arguments[0].name, "64");
     assert!(function.effects.is_none());
 
     assert!(std::ptr::eq(function.name.as_ptr(), source["fn ".len()..].as_ptr()));
@@ -113,4 +114,60 @@ fn parser_preserves_callable_without_effect_clause() {
         panic!("expected rule declaration");
     };
     assert!(rule.effects.is_none());
+}
+
+
+#[test]
+fn parser_preserves_capability_parameter_syntax_and_order() {
+    let source = "fn update(path: String, file: Cap<WriteFile>, reader: Cap<ReadFile>) { }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+    let syntra_lang::Declaration::Function(function) = &program.declarations[0] else { panic!("expected function"); };
+    assert_eq!(function.params.len(), 3);
+    assert!(matches!(&function.params[0].kind, syntra_lang::ParameterKind::Value { .. }));
+    let syntra_lang::ParameterKind::Capability { capability } = &function.params[1].kind else { panic!("expected capability parameter"); };
+    assert_eq!(capability.capability_name, "WriteFile");
+    assert_eq!(&source[capability.span.start..capability.span.end], "Cap<WriteFile>");
+    let syntra_lang::ParameterKind::Capability { capability } = &function.params[2].kind else { panic!("expected capability parameter"); };
+    assert_eq!(capability.capability_name, "ReadFile");
+    assert!(function.params[0].span.end <= function.params[1].span.start);
+    assert!(function.params[1].span.end <= function.params[2].span.start);
+}
+
+#[test]
+fn parser_accepts_capability_parameters_on_rules() {
+    let source = "rule synchronize(network: Cap<DispatchNetworkCommand>) { }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+    let syntra_lang::Declaration::Rule(rule) = &program.declarations[0] else { panic!("expected rule"); };
+    assert!(matches!(&rule.params[0].kind, syntra_lang::ParameterKind::Capability { .. }));
+}
+
+#[test]
+fn parser_preserves_explicit_move_as_direct_identifier() {
+    let source = "fn caller() { worker(move authority); }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse_program().expect("parsing succeeds");
+    let syntra_lang::Declaration::Function(function) = &program.declarations[0] else { panic!("expected function"); };
+    let syntra_lang::Statement::Expression { expression, .. } = &function.body.statements[0] else { panic!("expected expression statement"); };
+    let syntra_lang::Expression::Call { arguments, .. } = expression else { panic!("expected call"); };
+    let syntra_lang::Expression::Move { value, span } = &arguments[0] else { panic!("expected move"); };
+    assert!(matches!(value.as_ref(), syntra_lang::Expression::Identifier("authority", _)));
+    assert_eq!(&source[span.start..span.end], "move authority");
+}
+
+#[test]
+fn parser_rejects_non_identifier_move_targets() {
+    for source in [
+        "fn caller() { worker(move authority()); }",
+        "fn caller() { worker(move (authority)); }",
+        "fn caller() { worker(move authority.field); }",
+    ] {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let mut parser = Parser::new(&tokens);
+        assert!(parser.parse_program().is_err(), "must reject: {source}");
+    }
 }

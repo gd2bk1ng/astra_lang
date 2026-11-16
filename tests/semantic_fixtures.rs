@@ -1631,3 +1631,37 @@ fn call_site_effect_diagnostic_is_independent_of_argument_validation() {
         .collect::<Vec<_>>();
     assert_eq!(first_relevant, vec!["SYN2403", "SYN2105"]);
 }
+
+
+#[test]
+fn capability_parameters_are_canonicalized_and_not_value_bindings() {
+    let source = concat!("fn worker(authority: Cap<WriteFile>) { }\n", "fn caller() { worker(move authority); }\n");
+    let report = verify(source);
+    assert!(!report.diagnostics.iter().any(|d| d.code == "SYN2117"), "known kind must resolve: {:?}", report.diagnostics);
+    assert!(!report.diagnostics.iter().any(|d| d.code == "SYN2110"), "explicit move accepted: {:?}", report.diagnostics);
+    assert!(!report.diagnostics.iter().any(|d| d.code == "SYN2404"), "capability param is not an ordinary value binding: {:?}", report.diagnostics);
+}
+
+#[test]
+fn unknown_capability_parameter_kind_is_rejected_without_value_fallback() {
+    let source = "fn worker(authority: Cap<UnknownAuthority>) { }";
+    let report = verify(source);
+    let diagnostic = report.diagnostics.iter().find(|d| d.code == "SYN2117").expect("unknown kind rejected");
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "Cap<UnknownAuthority>");
+}
+
+#[test]
+fn capability_call_argument_requires_explicit_move_syntax() {
+    let source = concat!("fn worker(authority: Cap<WriteFile>) { }\n", "fn caller() { worker(authority); }\n");
+    let report = verify(source);
+    let diagnostic = report.diagnostics.iter().find(|d| d.code == "SYN2110").expect("explicit move required");
+    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "authority");
+}
+
+#[test]
+fn capability_move_syntax_does_not_mutate_authority_ledger() {
+    let source = concat!("fn worker(authority: Cap<WriteFile>) { }\n", "fn caller() { worker(move authority); }\n");
+    let report = verify(source);
+    assert!(!report.diagnostics.iter().any(|d| ["SYN2112","SYN2113","SYN2115","SYN2118","SYN2119"].contains(&d.code)),
+        "ownership lookup and mutation are deferred: {:?}", report.diagnostics);
+}

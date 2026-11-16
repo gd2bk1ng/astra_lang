@@ -588,12 +588,22 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         let mut params = Vec::new();
         if self.at(TokenKind::RParen) { return Ok(params); }
         loop {
-            let start = self.current_span().map(|s| s.start).unwrap_or(0);
+            let parameter_start = self.current_span().unwrap_or(Span::new(0, 0));
             let name = self.expect_identifier()?;
             self.expect(TokenKind::Colon, ":")?;
-            let ty = self.parse_type()?;
-            let end = ty.span.end;
-            params.push(Parameter { name, ty, span: Span::with_pos(start, end, 1, 1) });
+            let (kind, end) = if self.at_word("Cap") {
+                let cap_token = self.expect_word("Cap")?;
+                self.expect(TokenKind::LessThan, "<")?;
+                let capability_name = self.expect_identifier()?;
+                let close = self.expect(TokenKind::GreaterThan, ">")?;
+                let capability_span = span_from_origin(cap_token.span, close.span.end);
+                (ParameterKind::Capability { capability: CapabilityParameterSyntax { capability_name, span: capability_span } }, close.span.end)
+            } else {
+                let ty = self.parse_type()?;
+                let end = ty.span.end;
+                (ParameterKind::Value { ty }, end)
+            };
+            params.push(Parameter { name, kind, span: Span::with_pos(parameter_start.start, end, parameter_start.line, parameter_start.column) });
             if self.at(TokenKind::Comma) { self.bump(); if self.at(TokenKind::RParen) { break; } } else { break; }
         }
         Ok(params)
@@ -670,6 +680,17 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
     }
 
     fn parse_unary(&mut self) -> Result<Expression<'src>, ParseError<'src>> {
+        // `move` is contextual syntax with a direct-identifier-only target.
+        // Returning before postfix parsing prevents moving a call expression.
+        if self.at_word("move") {
+            let start = self.expect_word("move")?.span;
+            let target = self.expect_identifier_token()?;
+            let target_name = match target.kind { TokenKind::Identifier(name) => name, _ => unreachable!() };
+            return Ok(Expression::Move {
+                value: Box::new(Expression::Identifier(target_name, target.span)),
+                span: span_from_origin(start, target.span.end),
+            });
+        }
         let op = match self.current().map(|t| t.kind) { Some(TokenKind::Minus) => Some(UnaryOp::Negate), Some(TokenKind::Bang) => Some(UnaryOp::Not), _ => None };
         if let Some(operator) = op {
             let start_span = self.current_span().unwrap();
@@ -767,7 +788,7 @@ trait ExpressionSpan { fn span(&self) -> Span; }
 impl ExpressionSpan for Expression<'_> {
     fn span(&self) -> Span {
         match self {
-            Expression::Identifier(_, s) | Expression::Literal(_, s) | Expression::Symbolic { span: s, .. } | Expression::SelfModify { span: s, .. } | Expression::Unary { span: s, .. } | Expression::Binary { span: s, .. } | Expression::Call { span: s, .. } => *s,
+            Expression::Identifier(_, s) | Expression::Literal(_, s) | Expression::Symbolic { span: s, .. } | Expression::SelfModify { span: s, .. } | Expression::Move { span: s, .. } | Expression::Unary { span: s, .. } | Expression::Binary { span: s, .. } | Expression::Call { span: s, .. } => *s,
             Expression::Block(b) => b.span,
         }
     }
