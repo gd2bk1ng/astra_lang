@@ -124,6 +124,7 @@ impl CapabilityLedger{
    if let Some(p)=t.parent_transfer{let parent=self.transfers.get(&p).ok_or(CapabilityError::TransferHistoryCorrupt(p))?;if parent.state!=TransferState::Active||parent.destination_owner!=t.source_owner{return Err(CapabilityError::ParentTransferMismatch(t.instance_id))}}
    if self.active_transfers.get(&t.instance_id).is_some_and(|active|*active!=*tid){return Err(CapabilityError::UnresolvedDescendant(t.instance_id))}
    match(t.state,i.state,self.active_transfers.get(&t.instance_id).copied()){
+    (TransferState::Returned,_,_)=>{},
     (TransferState::Active,CapabilityState::InTransit{transfer_id},Some(active))if transfer_id==*tid&&active==*tid=>{},
     (TransferState::Active,CapabilityState::Consumed{..},None)=>{},
     (TransferState::Consumed,CapabilityState::Consumed{..},None)=>{},
@@ -133,7 +134,9 @@ impl CapabilityLedger{
    }
   }
   for tid in &tids{
-   let t=*self.transfers.get(tid).expect("preflighted");let i=self.instances.get_mut(&t.instance_id).expect("preflighted");
+   let t=*self.transfers.get(tid).expect("preflighted");
+   if t.state==TransferState::Returned { continue; }
+   let i=self.instances.get_mut(&t.instance_id).expect("preflighted");
    match i.state{
     CapabilityState::InTransit{transfer_id}if transfer_id==*tid=>{
      if abnormal{i.state=CapabilityState::Abandoned{invocation_id:id};self.active_transfers.remove(&t.instance_id);self.transfers.get_mut(tid).unwrap().state=TransferState::Abandoned}
