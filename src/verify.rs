@@ -13,8 +13,9 @@ use crate::diagnostics::{Diagnostic, DiagnosticEngine};
 use crate::epistemic::{EpistemicBinding, EpistemicEnvironment, EpistemicState};
 use crate::tokens::Span;
 use crate::capability_transfer::{
-    build_static_transfer_plan, CapabilityParameterSpec, CapabilityPrecommitError,
-    CapabilityTransferPlan, IndexedCapabilityParameter,
+    build_static_transfer_plan, CapabilityOwnerContext, CapabilityParameterSpec,
+    CapabilityPrecommitError, CapabilityTransferItem, CapabilityTransferPlan,
+    CapabilityTransferSource, IndexedCapabilityParameter,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1683,7 +1684,7 @@ impl<'src> SemanticVerifier<'src> {
                 }
 
                 let mut indexed_capability_parameters = Vec::new();
-                let mut has_symbolic_capability_argument = false;
+                let mut transfer_items = Vec::new();
                 let effects_valid = signature.effects.is_subset(&self.declared_effects);
                 let mut symbolic_seen = BTreeMap::<&'src str, Span>::new();
 
@@ -1737,7 +1738,6 @@ impl<'src> SemanticVerifier<'src> {
                     };
 
                     if let Some(symbolic_kind) = self.symbolic_capabilities.get(source_name).copied() {
-                        has_symbolic_capability_argument = true;
                         if symbolic_kind != required.capability {
                             is_valid = false;
                             self.error(
@@ -1754,6 +1754,18 @@ impl<'src> SemanticVerifier<'src> {
                                 format!("capability parameter '{}' is moved more than once in the same call", source_name),
                                 *move_span,
                             );
+                        } else {
+                            transfer_items.push(CapabilityTransferItem {
+                                source_name,
+                                source: CapabilityTransferSource::CallableParameter {
+                                    name: source_name,
+                                    declared_kind: symbolic_kind,
+                                },
+                                parameter_name: parameter.name,
+                                required_kind: required.capability,
+                                move_span: *move_span,
+                                parameter_span: parameter.span,
+                            });
                         }
                     } else if self.in_callable_body {
                         // Callable bodies have only their declared symbolic
@@ -1792,9 +1804,7 @@ impl<'src> SemanticVerifier<'src> {
                         &self.capability_ledger,
                     ) {
                         Ok(plan) => {
-                            if !has_symbolic_capability_argument && is_valid && effects_valid {
-                                self.capability_transfer_plans.push(plan);
-                            }
+                            transfer_items.extend_from_slice(plan.items());
                         }
                         Err(errors) => {
                             for error in errors {
@@ -1806,6 +1816,7 @@ impl<'src> SemanticVerifier<'src> {
                 }
 
                 for effect in signature.effects.difference(&self.declared_effects) {
+                    is_valid = false;
                     self.error(
                         CODE_CALL_EFFECT_REQUIRED,
                         format!(
@@ -1815,6 +1826,20 @@ impl<'src> SemanticVerifier<'src> {
                         ),
                         *span,
                     );
+                }
+
+                if !indexed_capability_parameters.is_empty() && is_valid && effects_valid {
+                    let caller_context = if self.in_callable_body {
+                        CapabilityOwnerContext::Callable
+                    } else {
+                        CapabilityOwnerContext::Host(self.capability_environment.active_owner())
+                    };
+                    self.capability_transfer_plans.push(CapabilityTransferPlan::from_parts(
+                        signature.name,
+                        caller_context,
+                        *span,
+                        transfer_items,
+                    ));
                 }
             }
             Expression::SelfModify { patch, .. } => {
