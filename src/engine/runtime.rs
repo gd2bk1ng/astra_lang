@@ -1,0 +1,284 @@
+//! Invocation registry and coordinator boundary for the runtime engine.
+//!
+//! The registry owns invocation identities and lifecycle state. Mutation is
+//! deliberately private: callers interact through RuntimeCoordinator, which
+//! holds the unforgeable coordinator privilege token.
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RegistryId(u64);
+
+impl RegistryId {
+    pub const fn value(self) -> u64 { self.0 }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InvocationId(u64);
+
+impl InvocationId {
+    pub const fn value(self) -> u64 { self.0 }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvocationState {
+    Prepared,
+    Committed,
+    Executing,
+    Returned,
+    Abandoned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeError {
+    RegistryIdExhausted,
+    InvocationIdExhausted,
+    UnknownInvocation(InvocationId),
+    InvalidTransition { from: InvocationState, to: InvocationState },
+    ParentNotExecuting(InvocationId),
+    ParentIdNotLessThanChild { parent: InvocationId, child: InvocationId },
+    NonTerminalDescendant(InvocationId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInvocationRecord {
+    id: InvocationId,
+    parent: Option<InvocationId>,
+    state: InvocationState,
+}
+
+impl RuntimeInvocationRecord {
+    pub const fn id(&self) -> InvocationId { self.id }
+    pub const fn parent(&self) -> Option<InvocationId> { self.parent }
+    pub const fn state(&self) -> InvocationState { self.state }
+}
+
+#[derive(Debug)]
+struct CoordinatorPrivilegeToken {
+    _private: (),
+}
+
+impl CoordinatorPrivilegeToken {
+    fn new() -> Self { Self { _private: () } }
+}
+
+#[derive(Debug)]
+struct RuntimeInvocationRegistry {
+    id: RegistryId,
+    next_invocation_id: u64,
+    records: BTreeMap<InvocationId, RuntimeInvocationRecord>,
+}
+
+impl RuntimeInvocationRegistry {
+    fn new() -> Result<Self, RuntimeError> {
+        let id = NEXT_REGISTRY_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
+            .map_err(|_| RuntimeError::RegistryIdExhausted)?;
+        Ok(Self {
+            id: RegistryId(id),
+            next_invocation_id: 1,
+            records: BTreeMap::new(),
+        })
+    }
+
+    fn allocate_id(&mut self) -> Result<InvocationId, RuntimeError> {
+        let value = self.next_invocation_id;
+        self.next_invocation_id = value.checked_add(1).ok_or(RuntimeError::InvocationIdExhausted)?;
+        Ok(InvocationId(value))
+    }
+
+    fn prepare(
+        &mut self,
+        _authority: &CoordinatorPrivilegeToken,
+        parent: Option<InvocationId>,
+    ) -> Result<InvocationId, RuntimeError> {
+        if let Some(parent_id) = parent {
+            let parent_record = self.records.get(&parent_id)
+                .ok_or(RuntimeError::UnknownInvocation(parent_id))?;
+            if parent_record.state != InvocationState::Executing {
+                return Err(RuntimeError::ParentNotExecuting(parent_id));
+            }
+        }
+
+        let id = self.allocate_id()?;
+        if let Some(parent_id) = parent {
+            if parent_id >= id {
+                return Err(RuntimeError::ParentIdNotLessThanChild { parent: parent_id, child: id });
+            }
+        }
+
+        self.records.insert(id, RuntimeInvocationRecord {
+            id,
+            parent,
+            state: InvocationState::Prepared,
+        });
+        Ok(id)
+    }
+
+    fn transition(
+        &mut self,
+        _authority: &CoordinatorPrivilegeToken,
+        id: InvocationId,
+        to: InvocationState,
+    ) -> Result<(), RuntimeError> {
+        let record = self.records.get(&id).ok_or(RuntimeError::UnknownInvocation(id))?;
+        let from = record.state;
+        let legal = matches!(
+            (from, to),
+            (InvocationState::Prepared, InvocationState::Committed)
+                | (InvocationState::Committed, InvocationState::Executing)
+                | (InvocationState::Executing, InvocationState::Returned)
+                | (InvocationState::Executing, InvocationState::Abandoned)
+        );
+        if !legal {
+            return Err(RuntimeError::InvalidTransition { from, to });
+        }
+
+        if matches!(to, InvocationState::Returned | InvocationState::Abandoned) {
+            if let Some(descendant) = self.first_nonterminal_descendant(id) {
+                return Err(RuntimeError::NonTerminalDescendant(descendant));
+            }
+        }
+
+        self.records.get_mut(&id).expect("record checked above").state = to;
+        Ok(())
+    }
+
+    fn first_nonterminal_descendant(&self, ancestor: InvocationId) -> Option<InvocationId> {
+        self.records.values().find_map(|candidate| {
+            if candidate.state == InvocationState::Returned || candidate.state == InvocationState::Abandoned {
+                return None;
+            }
+            let mut cursor = candidate.parent;
+            while let Some(parent) = cursor {
+                if parent == ancestor { return Some(candidate.id); }
+                cursor = self.records.get(&parent).and_then(|record| record.parent);
+            }
+            None
+        })
+    }
+}
+
+/// Sole public authority for creating invocations and advancing their lifecycle.
+#[derive(Debug)]
+pub struct RuntimeCoordinator {
+    registry: RuntimeInvocationRegistry,
+    authority: CoordinatorPrivilegeToken,
+}
+
+impl RuntimeCoordinator {
+    pub fn new() -> Result<Self, RuntimeError> {
+        Ok(Self {
+            registry: RuntimeInvocationRegistry::new()?,
+            authority: CoordinatorPrivilegeToken::new(),
+        })
+    }
+
+    pub const fn registry_id(&self) -> RegistryId { self.registry.id }
+
+    pub fn prepare_root(&mut self) -> Result<InvocationId, RuntimeError> {
+        self.registry.prepare(&self.authority, None)
+    }
+
+    pub fn prepare_child(&mut self, parent: InvocationId) -> Result<InvocationId, RuntimeError> {
+        self.registry.prepare(&self.authority, Some(parent))
+    }
+
+    pub fn commit(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
+        self.registry.transition(&self.authority, id, InvocationState::Committed)
+    }
+
+    pub fn begin_execution(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
+        self.registry.transition(&self.authority, id, InvocationState::Executing)
+    }
+
+    pub fn return_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
+        self.registry.transition(&self.authority, id, InvocationState::Returned)
+    }
+
+    pub fn abandon_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
+        self.registry.transition(&self.authority, id, InvocationState::Abandoned)
+    }
+
+    pub fn invocation(&self, id: InvocationId) -> Option<&RuntimeInvocationRecord> {
+        self.registry.records.get(&id)
+    }
+
+    pub fn invocations(&self) -> impl Iterator<Item = &RuntimeInvocationRecord> {
+        self.registry.records.values()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn executing_root(coordinator: &mut RuntimeCoordinator) -> InvocationId {
+        let root = coordinator.prepare_root().unwrap();
+        coordinator.commit(root).unwrap();
+        coordinator.begin_execution(root).unwrap();
+        root
+    }
+
+    #[test]
+    fn lifecycle_follows_only_the_declared_forward_edges() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = coordinator.prepare_root().unwrap();
+        assert!(matches!(
+            coordinator.begin_execution(root),
+            Err(RuntimeError::InvalidTransition { .. })
+        ));
+        coordinator.commit(root).unwrap();
+        coordinator.begin_execution(root).unwrap();
+        coordinator.return_invocation(root).unwrap();
+        assert_eq!(coordinator.invocation(root).unwrap().state(), InvocationState::Returned);
+        assert!(matches!(
+            coordinator.abandon_invocation(root),
+            Err(RuntimeError::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn child_ids_are_monotonic_and_parent_must_be_executing() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = coordinator.prepare_root().unwrap();
+        assert!(matches!(
+            coordinator.prepare_child(root),
+            Err(RuntimeError::ParentNotExecuting(_))
+        ));
+        coordinator.commit(root).unwrap();
+        coordinator.begin_execution(root).unwrap();
+        let child = coordinator.prepare_child(root).unwrap();
+        assert!(child.value() > root.value());
+        assert_eq!(coordinator.invocation(child).unwrap().parent(), Some(root));
+    }
+
+    #[test]
+    fn parent_cannot_terminate_before_nonterminal_descendants() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+        assert_eq!(
+            coordinator.return_invocation(root),
+            Err(RuntimeError::NonTerminalDescendant(child))
+        );
+        coordinator.return_invocation(child).unwrap();
+        coordinator.return_invocation(root).unwrap();
+    }
+
+    #[test]
+    fn abandoned_invocation_is_terminal_and_irreversible() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        coordinator.abandon_invocation(root).unwrap();
+        assert!(matches!(
+            coordinator.return_invocation(root),
+            Err(RuntimeError::InvalidTransition { .. })
+        ));
+    }
+}
