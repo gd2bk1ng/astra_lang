@@ -1678,6 +1678,7 @@ impl<'src> SemanticVerifier<'src> {
 
                 let mut indexed_capability_parameters = Vec::new();
                 let mut has_symbolic_capability_argument = false;
+                let effects_valid = signature.effects.is_subset(&self.declared_effects);
                 let mut symbolic_seen = BTreeMap::<&'src str, Span>::new();
 
                 for (parameter_index, parameter) in signature.parameters.iter().enumerate() {
@@ -1696,6 +1697,7 @@ impl<'src> SemanticVerifier<'src> {
                     let Some(argument) = arguments.get(parameter_index) else {
                         // Arity diagnostics are emitted independently above.
                         // SYN2116 additionally identifies the omitted authority slot.
+                        is_valid = false;
                         self.error(
                             CODE_CAPABILITY_ARGUMENT_MISSING,
                             format!("call to '{}' omits required capability parameter '{}' of kind '{}'",
@@ -1706,6 +1708,7 @@ impl<'src> SemanticVerifier<'src> {
                     };
 
                     let Expression::Move { value, span: move_span } = argument else {
+                        is_valid = false;
                         self.error(
                             CODE_CAPABILITY_MOVE_REQUIRED,
                             format!("capability parameter '{}' of kind '{}' requires an explicit move expression",
@@ -1715,6 +1718,7 @@ impl<'src> SemanticVerifier<'src> {
                         continue;
                     };
                     let Expression::Identifier(source_name, _) = value.as_ref() else {
+                        is_valid = false;
                         self.error(
                             CODE_CAPABILITY_UNAVAILABLE,
                             format!("move argument for capability parameter '{}' must name an available owned capability binding",
@@ -1727,6 +1731,7 @@ impl<'src> SemanticVerifier<'src> {
                     if let Some(symbolic_kind) = self.symbolic_capabilities.get(source_name).copied() {
                         has_symbolic_capability_argument = true;
                         if symbolic_kind != required.capability {
+                            is_valid = false;
                             self.error(
                                 CODE_CAPABILITY_KIND_MISMATCH,
                                 format!("capability '{}' has kind '{}', but parameter '{}' requires '{}'",
@@ -1734,8 +1739,8 @@ impl<'src> SemanticVerifier<'src> {
                                 *move_span,
                             );
                         }
-                        if let Some(first_span) = symbolic_seen.insert(source_name, *move_span) {
-                            let _ = first_span;
+                        if symbolic_seen.insert(source_name, *move_span).is_some() {
+                            is_valid = false;
                             self.error(
                                 CODE_CAPABILITY_DUPLICATE_MOVE,
                                 format!("capability parameter '{}' is moved more than once in the same call", source_name),
@@ -1769,12 +1774,13 @@ impl<'src> SemanticVerifier<'src> {
                         &self.capability_ledger,
                     ) {
                         Ok(plan) => {
-                            if !has_symbolic_capability_argument {
+                            if !has_symbolic_capability_argument && is_valid && effects_valid {
                                 self.capability_transfer_plans.push(plan);
                             }
                         }
                         Err(errors) => {
                             for error in errors {
+                                is_valid = false;
                                 self.emit_capability_precommit_error(error);
                             }
                         }
