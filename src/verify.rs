@@ -1872,9 +1872,9 @@ impl<'src> SemanticVerifier<'src> {
                 self.error(CODE_CAPABILITY_DUPLICATE_MOVE,
                     format!("capability instance bound as '{source_name}' is moved more than once in the same call"), duplicate_argument_span);
             }
-            CapabilityPrecommitError::Ledger(_) => {
+            CapabilityPrecommitError::Ledger { error: _, argument_span } => {
                 self.error(CODE_CAPABILITY_UNAVAILABLE,
-                    "capability ledger could not resolve the requested move", Span::new(0, 0));
+                    "capability ledger could not resolve the requested move", argument_span);
             }
         }
     }
