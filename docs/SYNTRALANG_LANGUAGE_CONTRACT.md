@@ -1,228 +1,89 @@
 # SyntraLang Language Contract
 
-Status: **Foundational design specification — evolving**
+Status: **foundational design contract — evolving; not a complete language specification**
 
-This document defines the semantic direction of SyntraLang. It is intentionally
-more stable than any individual parser or runtime implementation. Syntax may
-change while these concepts are refined.
+This document describes the intended semantic direction of SyntraLang and the constraints that should guide implementation. It is not a claim that all concepts below have complete syntax, static semantics, or runtime behavior today.
 
 ## 1. Purpose
 
-SyntraLang is designed to represent programs that do more than calculate values.
-It should eventually provide first-class language concepts for describing
-intelligence-oriented systems: what they intend to do, what they know, what they
-observe, what they are permitted to do, how they reason, and how their actions
-can be verified.
+SyntraLang explores a language model for programs and systems that need to make purpose, knowledge, uncertainty, effects, authority, and verification inspectable alongside ordinary computation.
 
-This is a design goal, not a claim that the current implementation already
-provides these capabilities.
+The language should be usable independently of Syntra Kernel and the wider Syntra ecosystem.
 
 ## 2. Core concepts
 
-### Intent
+- **Intent:** a named declaration describing purpose and associated structured members.
+- **Goal:** a named outcome with descriptive, priority, condition, and target fields.
+- **Knowledge and context:** information available to a computation, including its scope and provenance. These are design concepts; complete dedicated syntax is not yet implemented.
+- **Relationships:** explicit connections among entities, concepts, events, and states. Planned.
+- **Rules:** named callable-like declarations currently parsed alongside functions.
+- **Capabilities:** authority to perform a defined class of operation. The source vocabulary and initial semantic checks are experimental; a secure runtime capability system is not yet complete.
+- **Effects:** declarations of operation classes such as pure computation, I/O, or network access. Current intent syntax preserves effect names; verification coverage is partial.
+- **Uncertainty:** structured confidence, assumption, evidence, and source members. The AST and parser preserve this structure; calibration and a complete probabilistic type system are future work.
+- **Memory and observation:** concepts for persistent state and received information, including provenance, lifetime, and authorization. Planned.
+- **Action:** an intentional interaction with an environment or resource. Planned as a complete semantic/runtime construct.
+- **Reflection:** inspectable examination of state, reasoning, or execution history. Planned; it does not imply consciousness.
+- **Verification:** checks that source structures satisfy supported constraints. A first semantic-verification pass exists; it is not a proof system.
+- **Governance:** policy, approval metadata, constraints, and audit requirements. The parser preserves selected governance members; an approval label is never proof of authorization.
+- **Learning and adaptation:** controlled changes based on experience. Future design; it must not imply unrestricted code modification.
 
-**Intent** describes what a system is trying to accomplish.
+## 3. Architectural separation
 
-An intent should eventually be representable independently from the mechanics
-used to execute it.
+The language is designed around distinct responsibilities:
 
-### Goals
+1. Source text and lexical structure.
+2. Grammatical structure and borrowed AST.
+3. Static semantic verification.
+4. Lowered/intermediate representation.
+5. Runtime authority and effect enforcement.
+6. Backend execution and host integration.
 
-**Goals** describe desired outcomes, priorities, or target states.
+Parsing must not grant authority. Static verification must not be presented as runtime enforcement. Runtime policy must not trust a source-level label such as `approved` without an authoritative external event and verifiable provenance.
 
-Goals may eventually participate in planning, evaluation, prioritization, and
-verification.
+## 4. Long-term compilation direction
 
-### Knowledge
+```text
+SyntraLang source
+      |
+      v
+Lexer -> Tokens -> Parser -> AST
+                           |
+                           v
+                   Semantic verification
+                           |
+                           v
+                  Cognitive Intermediate IR
+                           |
+                           v
+                 Runtime / backend / host
+```
 
-**Knowledge** represents structured information that a system can use when
-reasoning or acting.
-
-The language should distinguish knowledge from transient computation where that
-distinction is semantically useful.
-
-### Context
-
-**Context** describes the information relevant to a computation, decision, or
-intent at a particular point in time.
-
-Context should be explicit enough to support reproducible reasoning and
-diagnostics.
-
-### Relationships
-
-**Relationships** represent connections among entities, concepts, events, states,
-and other semantic objects.
-
-This provides a foundation for graph-oriented and relational reasoning without
-requiring every relationship to be encoded as an ordinary function call.
-
-### Rules
-
-**Rules** represent explicit constraints, conditions, transformations, or
-reasoning relationships.
-
-Rules should remain inspectable and verifiable rather than being hidden inside
-opaque runtime behavior.
-
-### Capabilities
-
-**Capabilities** describe what an agent, function, module, or runtime component
-is permitted to do.
-
-Capability design will be tied to governance and effect tracking.
-
-### Effects
-
-**Effects** describe observable changes or interactions caused by an operation.
-
-Potential effect classes include pure computation, I/O, network access, and
-self-modification. The current grammar already contains an experimental effect
-vocabulary; its semantics are not yet finalized.
-
-### Uncertainty
-
-**Uncertainty** represents incomplete knowledge, confidence, probability, or
-other non-binary states of belief.
-
-SyntraLang should not force cognitive systems to represent every conclusion as
-simply true or false.
-
-### Memory
-
-**Memory** represents persistent or contextual information available to a
-cognitive system.
-
-Memory semantics must eventually distinguish scope, lifetime, provenance,
-mutability, and authorization.
-
-### Observation
-
-**Observation** represents information received from an external or internal
-source.
-
-Observations should preserve enough provenance and context to support later
-verification.
-
-### Action
-
-**Action** represents an intentional interaction with an environment, system,
-resource, or other agent.
-
-Actions should eventually expose their required capabilities and expected
-effects.
-
-### Reflection
-
-**Reflection** represents examination of a system's own state, reasoning,
-execution history, or performance.
-
-Reflection does not imply consciousness. It is a language-level representation
-of introspective or metacognitive operations.
-
-### Verification
-
-**Verification** represents checking whether a conclusion, state, or action
-satisfies defined constraints or evidence requirements.
-
-Verification should be composable with intents, rules, capabilities, and effects.
-
-### Governance
-
-**Governance** represents permissions, authorization, safety boundaries,
-approval requirements, policy, auditability, and related controls.
-
-Governance must be treated as a semantic concern rather than an optional UI
-feature.
-
-### Learning and adaptation
-
-**Learning/adaptation** represents controlled changes in behavior, parameters,
-knowledge, or strategies based on experience or new information.
-
-Learning must not implicitly grant unrestricted authority to modify executable
-code or bypass governance.
-
-### Human intent and approval
-
-**Human intent and approval** should be representable explicitly.
-
-Human approval must eventually be modeled as an authoritative event with
-defined scope, provenance, and expiry or revocation semantics where
-appropriate. A label such as `approved` must never be treated as proof of
-authorization by itself.
-
-## 3. Architectural principle
-
-The language should preserve a separation between:
-
-1. **what is intended**,
-2. **what is known or observed**,
-3. **what reasoning is performed**,
-4. **what actions are requested**,
-5. **what capabilities permit those actions**,
-6. **what effects may occur**, and
-7. **what governance and verification constrain the system**.
-
-This separation is intended to make cognitive programs inspectable, testable,
-portable, and interoperable.
-
-## 4. Compilation direction
-
-The long-term compilation model is expected to evolve toward:
-
-`SyntraLang source -> AST -> semantic model -> Cognitive IR -> runtime/backend`
-
-The Cognitive IR is a future design target. It is not implemented by the
-current lexical milestone.
-
-The IR should preserve semantic information that would otherwise disappear
-during ordinary lowering.
+The Cognitive IR and complete backend are future targets, not implemented components of the current crate.
 
 ## 5. Design constraints
 
 SyntraLang should prioritize:
 
-- deterministic behavior where determinism is possible;
-- explicit semantics over magical behavior;
-- machine-readable source structure;
-- strong diagnostics and source spans;
+- deterministic behavior where possible;
+- explicit semantics over implicit or magical behavior;
+- source spans and recoverable provenance;
+- clear ownership and lifetime boundaries;
 - capability-aware effects;
-- explicit uncertainty;
-- provenance and auditability;
-- safe defaults;
-- interoperability;
-- portability;
-- backwards compatibility through deliberate versioning;
-- independent implementation and testing of language layers.
+- explicit uncertainty rather than silently treating every value as certain;
+- safe defaults and least authority;
+- auditable governance;
+- interoperability and portability;
+- deliberate compatibility and versioning;
+- independent testability of each layer.
 
 ## 6. Historical continuity
 
-The historical Astra implementation is a research and recovery artifact for
-SyntraLang. Existing Astra concepts should be evaluated individually:
+Earlier Astra work is historical research material. Concepts should be evaluated individually: preserve sound ideas, redesign fragile ones, reject ideas that conflict with this contract, and retain old code only when it provides useful evidence or regression material. Historical implementation details are not automatically normative for SyntraLang.
 
-- preserve ideas that remain sound;
-- redesign ideas whose implementation was fragile;
-- reject ideas that no longer fit the language contract;
-- retain historical code when it provides useful experiments or regression
-  material.
+## 7. Current implementation boundary
 
-SyntraLang is therefore an evolution of the Astra work, not a claim that every
-historical implementation detail remains correct.
+Implemented foundations include a Unicode-aware borrowed lexer, an initial recursive-descent parser and borrowed AST, parser recovery, source-aware diagnostics, an initial semantic verifier, and a registry-qualified invocation coordinator.
 
-## 7. Current implementation status
+Not yet implemented as complete language/runtime features: a stable formal 1.0 grammar, a full type/effect system, Cognitive IR, interpreter/compiler backend, secure capability ledger and transfer runtime, standard library, CLI, LSP, package manager, or production-grade governance/authorization.
 
-At the current milestone:
-
-- lexical infrastructure exists;
-- token spans and source lexemes exist;
-- strict malformed-input handling exists;
-- Unicode XID-based identifiers exist;
-- the formal grammar is still a draft;
-- parser/AST integration is not yet complete;
-- semantic implementations for the concepts above are not yet complete;
-- Cognitive IR is not yet implemented;
-- governance and self-modification remain research/design concerns.
-
-The contract will be updated as implementation and testing establish stronger
-evidence.
+See [Implementation Status](IMPLEMENTATION_STATUS.md) for the detailed matrix.
