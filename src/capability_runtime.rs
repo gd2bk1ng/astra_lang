@@ -126,7 +126,9 @@ impl CapabilityLedger{
    match(t.state,i.state,self.active_transfers.get(&t.instance_id).copied()){
     (TransferState::Active,CapabilityState::InTransit{transfer_id},Some(active))if transfer_id==*tid&&active==*tid=>{},
     (TransferState::Active,CapabilityState::Consumed{..},None)=>{},
+    (TransferState::Consumed,CapabilityState::Consumed{..},None)=>{},
     (TransferState::Active,CapabilityState::Abandoned{..},None)if abnormal=>{},
+    (TransferState::Abandoned,CapabilityState::Abandoned{..},None)if abnormal=>{},
     _=>return Err(CapabilityError::TransferHistoryCorrupt(*tid))
    }
   }
