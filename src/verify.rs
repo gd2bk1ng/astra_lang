@@ -545,6 +545,68 @@ pub enum CapabilityError {
     InvalidReconciliation(CapabilityInstanceId),
 }
 
+/// A source-level name bound to an already provisioned authority instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapabilityBinding {
+    instance: CapabilityInstanceId,
+    owner: CapabilityOwnerId,
+    declaration_span: Span,
+}
+
+impl CapabilityBinding {
+    pub const fn instance(&self) -> CapabilityInstanceId { self.instance }
+    pub const fn owner(&self) -> CapabilityOwnerId { self.owner }
+    pub const fn declaration_span(&self) -> Span { self.declaration_span }
+}
+
+/// Source-name resolution is deliberately separate from epistemic value bindings.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CapabilityEnvironment<'src> {
+    bindings: BTreeMap<&'src str, CapabilityBinding>,
+    active_owner: CapabilityOwnerId,
+}
+
+impl<'src> CapabilityEnvironment<'src> {
+    pub fn new(root_owner: CapabilityOwnerId) -> Self {
+        Self { bindings: BTreeMap::new(), active_owner: root_owner }
+    }
+
+    pub const fn active_owner(&self) -> CapabilityOwnerId { self.active_owner }
+
+    pub fn lookup(&self, name: &str) -> Option<&CapabilityBinding> {
+        self.bindings.get(name)
+    }
+
+    fn bind_root(
+        &mut self,
+        name: &'src str,
+        instance: CapabilityInstanceId,
+        owner: CapabilityOwnerId,
+        declaration_span: Span,
+    ) -> Result<(), CapabilityBindingError> {
+        if owner != self.active_owner {
+            return Err(CapabilityBindingError::WrongOwner);
+        }
+        if self.bindings.contains_key(name) {
+            return Err(CapabilityBindingError::DuplicateName);
+        }
+        if self.bindings.values().any(|binding| binding.instance == instance) {
+            return Err(CapabilityBindingError::DuplicateInstance);
+        }
+        self.bindings.insert(name, CapabilityBinding { instance, owner, declaration_span });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityBindingError {
+    UnknownInstance,
+    WrongOwner,
+    NotAvailable,
+    DuplicateName,
+    DuplicateInstance,
+}
+
 /// Result of semantic verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticReport<'a> {
@@ -631,6 +693,7 @@ pub struct SemanticVerifier<'src> {
     diagnostics: Vec<Diagnostic<'src>>,
     declared_effects: BTreeSet<EffectId>,
     capability_ledger: CapabilityLedger,
+    capability_environment: CapabilityEnvironment<'src>,
     epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
     callable_registry: CallableRegistry<'src>,
@@ -639,16 +702,57 @@ pub struct SemanticVerifier<'src> {
 
 impl<'src> SemanticVerifier<'src> {
     pub fn new(source: &'src str) -> Self {
+        Self::with_capability_ledger(source, CapabilityLedger::new())
+    }
+
+    /// Construct a verifier with authority provisioned by a trusted host.
+    /// Source syntax can bind existing instances but cannot provision new ones.
+    pub fn with_capability_ledger(source: &'src str, capability_ledger: CapabilityLedger) -> Self {
+        let root_owner = capability_ledger.root_owner();
         Self {
             source,
             diagnostics: Vec::new(),
             declared_effects: BTreeSet::new(),
-            capability_ledger: CapabilityLedger::new(),
+            capability_ledger,
+            capability_environment: CapabilityEnvironment::new(root_owner),
             epistemic_confidence: None,
             epistemic_environment: EpistemicEnvironment::new(),
             callable_registry: CallableRegistry::default(),
             expected_return_type: None,
         }
+    }
+
+    pub fn capability_ledger(&self) -> &CapabilityLedger {
+        &self.capability_ledger
+    }
+
+    pub fn capability_ledger_mut(&mut self) -> &mut CapabilityLedger {
+        &mut self.capability_ledger
+    }
+
+    pub fn capability_environment(&self) -> &CapabilityEnvironment<'src> {
+        &self.capability_environment
+    }
+
+    /// Bind a source identifier to an existing root-owned, available instance.
+    /// This operation never provisions or changes authority.
+    pub fn bind_root_capability(
+        &mut self,
+        name: &'src str,
+        instance: CapabilityInstanceId,
+        declaration_span: Span,
+    ) -> Result<(), CapabilityBindingError> {
+        let record = self.capability_ledger.instance(instance)
+            .map_err(|_| CapabilityBindingError::UnknownInstance)?;
+        if record.owner() != self.capability_environment.active_owner() {
+            return Err(CapabilityBindingError::WrongOwner);
+        }
+        if record.state() != CapabilityState::Available {
+            return Err(CapabilityBindingError::NotAvailable);
+        }
+        self.capability_environment.bind_root(
+            name, instance, record.owner(), declaration_span
+        )
     }
 
     pub fn verify_program(mut self, program: &Program<'src>) -> SemanticReport<'src> {
