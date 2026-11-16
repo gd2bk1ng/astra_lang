@@ -8,7 +8,7 @@ SyntraLang: an intent-oriented language core for AI, symbolic reasoning,
 cognitive systems, and future Syntra Kernel tooling.
 """
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/gd2bk1ng/astra_lang"
+repository = "https://github.com/gd2bk1ng/syntra_lang"
 readme = "README.md"
 keywords = ["programming-language", "AI", "intent", "symbolic-reasoning", "cognitive"]
 categories = ["programming-language", "artificial-intelligence", "domain-specific-language"]
