@@ -421,3 +421,111 @@ mod call_site_integration_tests {
         assert!(report.capability_transfer_plans().is_empty());
     }
 }
+
+#[cfg(test)]
+mod diagnostic_mapping_tests {
+    use super::*;
+    use crate::{Lexer, Parser, SemanticVerifier};
+
+    fn program(source: &str) -> (Vec<crate::Token<'_>>, crate::Program<'_>) {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let program = Parser::new(&tokens).parse_program().expect("parsing succeeds");
+        (tokens, program)
+    }
+
+    fn report_with_instance<'a>(
+        source: &'a str,
+        instance_kind: CapabilityId,
+        parameter_kind: &'static str,
+        bind_name: &'static str,
+    ) -> crate::SemanticReport<'a> {
+        let (_tokens, ast) = program(source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(instance_kind, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
+        verifier.bind_root_capability(bind_name, instance, Span::new(0, 0)).unwrap();
+        let _ = parameter_kind;
+        verifier.verify_program(&ast)
+    }
+
+    #[test]
+    fn call_site_maps_missing_move_and_kind_mismatch() {
+        let missing_move_source = concat!(
+            "fn worker(file: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(reader); } }",
+        );
+        let (_tokens, ast) = program(missing_move_source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(missing_move_source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+        let report = verifier.verify_program(&ast);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2110"));
+
+        let mismatch_source = concat!(
+            "fn worker(file: Cap<WriteFile>) { }\n",
+            "intent task { workspace { worker(move reader); } }",
+        );
+        let report = report_with_instance(
+            mismatch_source,
+            CapabilityId::ReadFile,
+            "WriteFile",
+            "reader",
+        );
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2111"));
+    }
+
+    #[test]
+    fn call_site_maps_unbound_and_duplicate_moves() {
+        let unbound_source = concat!(
+            "fn worker(file: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(move missing); } }",
+        );
+        let (_tokens, ast) = program(unbound_source);
+        let report = SemanticVerifier::new(unbound_source).verify_program(&ast);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2112"));
+
+        let duplicate_source = concat!(
+            "fn worker(first: Cap<ReadFile>, second: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(move reader, move reader); } }",
+        );
+        let (_tokens, ast) = program(duplicate_source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(duplicate_source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+        let report = verifier.verify_program(&ast);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2114"));
+    }
+
+    #[test]
+    fn call_site_maps_consumed_and_in_transit_authority() {
+        let source = concat!(
+            "fn worker(file: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(move reader); } }",
+        );
+        let (_tokens, ast) = program(source);
+
+        let mut consumed_ledger = CapabilityLedger::new();
+        let root = consumed_ledger.root_owner();
+        let consumed = consumed_ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut consumed_verifier = SemanticVerifier::with_capability_ledger(source, consumed_ledger);
+        consumed_verifier.bind_root_capability("reader", consumed, Span::new(0, 0)).unwrap();
+        consumed_verifier.capability_ledger_mut().enter_transit(root, consumed, 77).unwrap();
+        consumed_verifier.capability_ledger_mut().consume(root, consumed, 77, Span::new(10, 20)).unwrap();
+        let consumed_report = consumed_verifier.verify_program(&ast);
+        assert!(consumed_report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2113"));
+
+        let mut transit_ledger = CapabilityLedger::new();
+        let root = transit_ledger.root_owner();
+        let transit = transit_ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut transit_verifier = SemanticVerifier::with_capability_ledger(source, transit_ledger);
+        transit_verifier.bind_root_capability("reader", transit, Span::new(0, 0)).unwrap();
+        transit_verifier.capability_ledger_mut().enter_transit(root, transit, 78).unwrap();
+        let transit_report = transit_verifier.verify_program(&ast);
+        assert!(transit_report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2115"));
+    }
+}
