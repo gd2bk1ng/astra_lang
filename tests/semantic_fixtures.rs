@@ -1665,3 +1665,18 @@ fn capability_move_syntax_does_not_mutate_authority_ledger() {
     assert!(!report.diagnostics.iter().any(|d| ["SYN2112","SYN2113","SYN2115","SYN2118","SYN2119"].contains(&d.code)),
         "ownership lookup and mutation are deferred: {:?}", report.diagnostics);
 }
+
+
+#[test]
+fn capability_parameter_does_not_shadow_ordinary_callable_binding() {
+    let source = concat!(
+        "fn authority() { }\n",
+        "fn worker(authority: Cap<WriteFile>) { authority(); }\n",
+    );
+    let report = verify(source);
+    assert!(
+        !report.diagnostics.iter().any(|d| d.code == "SYN2404"),
+        "capability parameters must not enter the ordinary value namespace: {:?}",
+        report.diagnostics
+    );
+}

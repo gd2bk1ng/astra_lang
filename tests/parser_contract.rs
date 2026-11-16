@@ -157,6 +157,8 @@ fn parser_preserves_explicit_move_as_direct_identifier() {
     let syntra_lang::Expression::Move { value, span } = &arguments[0] else { panic!("expected move"); };
     assert!(matches!(value.as_ref(), syntra_lang::Expression::Identifier("authority", _)));
     assert_eq!(&source[span.start..span.end], "move authority");
+    syntra_lang::validate_program_invariants(&program, source)
+        .expect("parsed capability move AST must satisfy structural invariants");
 }
 
 #[test]

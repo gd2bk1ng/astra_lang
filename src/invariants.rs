@@ -208,7 +208,12 @@ impl<'src> Validator<'src> {
             }
             ParameterKind::Capability { capability } => {
                 self.check_span(capability.span, "capability parameter kind", true);
-                self.check_containment(parameter.span, capability.span, "capability parameter kind", "parameter");
+                self.check_containment(
+                    parameter.span,
+                    capability.span,
+                    "capability parameter kind",
+                    "parameter",
+                );
             }
         }
     }
@@ -407,7 +412,11 @@ impl<'src> Validator<'src> {
                 self.validate_expression(value);
                 self.check_containment(span, value.span(), "move target", "move expression");
                 if !matches!(value.as_ref(), Expression::Identifier(_, _)) {
-                    self.error(AstInvariantKind::InvalidMoveTarget, value.span(), "move expression target must be a direct identifier");
+                    self.error(
+                        AstInvariantKind::InvalidMoveTarget,
+                        value.span(),
+                        "move expression target must be a direct identifier",
+                    );
                 }
             }
 

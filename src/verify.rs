@@ -4,10 +4,9 @@
 //! "what source structure was written?"; this pass answers "is that structure
 //! semantically admissible under the currently implemented verifier rules?".
 //!
-//! The current AST does not yet encode probabilistic variable declarations or
-//! capability-token declarations. Callable effect contracts are collected in
-//! the shared registry; capability ownership is maintained here as an
-//! independent affine authority ledger foundation.
+//! The AST preserves capability parameter and move syntax independently from
+//! ordinary value expressions. Callable contracts are canonicalized here;
+//! actual ownership transfer remains a separate affine-ledger operation.
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
@@ -585,27 +584,46 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
-    fn resolve_callable_parameters(&mut self, parameters: &[Parameter<'src>]) -> Vec<CallableParameter<'src>> {
-        parameters.iter().map(|parameter| {
-            let kind = match &parameter.kind {
-                ParameterKind::Value { ty } => CallableParameterKind::Value { type_name: ty.name },
-                ParameterKind::Capability { capability } => {
-                    let resolved = resolve_capability(capability.capability_name);
-                    if resolved.is_none() {
-                        self.error(CODE_CAPABILITY_PARAMETER_INVALID,
-                            format!("capability parameter '{}' uses unknown capability kind '{}'", parameter.name, capability.capability_name),
-                            capability.span);
+    fn resolve_callable_parameters(
+        &mut self,
+        parameters: &[Parameter<'src>],
+    ) -> Vec<CallableParameter<'src>> {
+        parameters
+            .iter()
+            .map(|parameter| {
+                let kind = match &parameter.kind {
+                    ParameterKind::Value { ty } => {
+                        CallableParameterKind::Value { type_name: ty.name }
                     }
-                    CallableParameterKind::Capability {
-                        capability: resolved.map(|capability_id| CallableCapabilityParameter {
-                            capability: capability_id,
-                            span: capability.span,
-                        }),
+                    ParameterKind::Capability { capability } => {
+                        let resolved = resolve_capability(capability.capability_name);
+                        if resolved.is_none() {
+                            self.error(
+                                CODE_CAPABILITY_PARAMETER_INVALID,
+                                format!(
+                                    "capability parameter '{}' uses unknown capability kind '{}'",
+                                    parameter.name, capability.capability_name
+                                ),
+                                capability.span,
+                            );
+                        }
+                        CallableParameterKind::Capability {
+                            capability: resolved.map(|capability_id| {
+                                CallableCapabilityParameter {
+                                    capability: capability_id,
+                                    span: capability.span,
+                                }
+                            }),
+                        }
                     }
+                };
+                CallableParameter {
+                    name: parameter.name,
+                    kind,
+                    span: parameter.span,
                 }
-            };
-            CallableParameter { name: parameter.name, kind, span: parameter.span }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Resolve effect declarations into canonical identities
@@ -725,22 +743,46 @@ impl<'src> SemanticVerifier<'src> {
         self.declared_effects = previous_effects;
     }
 
-    fn register_parameter(&mut self, parameter: &Parameter<'src>, parameter_names: &mut BTreeSet<&'src str>) {
+    fn register_parameter(
+        &mut self,
+        parameter: &Parameter<'src>,
+        parameter_names: &mut BTreeSet<&'src str>,
+    ) {
         if !parameter_names.insert(parameter.name) {
-            self.error(CODE_EPISTEMIC_BINDING_DUPLICATE,
-                format!("parameter '{}' is already declared in this function or rule scope", parameter.name),
-                parameter.span);
+            self.error(
+                CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!(
+                    "parameter '{}' is already declared in this function or rule scope",
+                    parameter.name
+                ),
+                parameter.span,
+            );
             return;
         }
+
         let ParameterKind::Value { ty } = &parameter.kind else {
             // Capability parameters are not ordinary epistemic value bindings.
             return;
         };
-        let binding = EpistemicBinding::new(parameter.name, ty.name, EpistemicState::Uncertain, parameter.span);
-        if self.epistemic_environment.declare(parameter.name, binding).is_err() {
-            self.error(CODE_EPISTEMIC_BINDING_DUPLICATE,
-                format!("parameter '{}' is already declared in this function or rule scope", parameter.name),
-                parameter.span);
+        let binding = EpistemicBinding::new(
+            parameter.name,
+            ty.name,
+            EpistemicState::Uncertain,
+            parameter.span,
+        );
+        if self
+            .epistemic_environment
+            .declare(parameter.name, binding)
+            .is_err()
+        {
+            self.error(
+                CODE_EPISTEMIC_BINDING_DUPLICATE,
+                format!(
+                    "parameter '{}' is already declared in this function or rule scope",
+                    parameter.name
+                ),
+                parameter.span,
+            );
         }
     }
 
@@ -1336,16 +1378,23 @@ impl<'src> SemanticVerifier<'src> {
                 }
 
                 for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
-                    if let CallableParameterKind::Capability { capability: Some(required) } = &parameter.kind {
-                        // Reading the canonical kind and declaration span here
-                        // confirms the registry carries canonical contract data;
-                        // instance-kind matching belongs to transfer validation.
+                    if let CallableParameterKind::Capability {
+                        capability: Some(required),
+                    } = &parameter.kind
+                    {
+                        // Canonical kind matching against a source authority
+                        // instance belongs to the transfer-validation phase.
                         let _required_kind = required.capability;
                         let _declaration_span = required.span;
                         if !matches!(argument, Expression::Move { .. }) {
-                            self.error(CODE_CAPABILITY_MOVE_REQUIRED,
-                                format!("capability parameter '{}' requires an explicit move expression", parameter.name),
-                                expression_span(argument));
+                            self.error(
+                                CODE_CAPABILITY_MOVE_REQUIRED,
+                                format!(
+                                    "capability parameter '{}' requires an explicit move expression",
+                                    parameter.name
+                                ),
+                                expression_span(argument),
+                            );
                         }
                     }
                 }

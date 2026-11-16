@@ -597,13 +597,30 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
                 let capability_name = self.expect_identifier()?;
                 let close = self.expect(TokenKind::GreaterThan, ">")?;
                 let capability_span = span_from_origin(cap_token.span, close.span.end);
-                (ParameterKind::Capability { capability: CapabilityParameterSyntax { capability_name, span: capability_span } }, close.span.end)
+                (
+                    ParameterKind::Capability {
+                        capability: CapabilityParameterSyntax {
+                            capability_name,
+                            span: capability_span,
+                        },
+                    },
+                    close.span.end,
+                )
             } else {
                 let ty = self.parse_type()?;
                 let end = ty.span.end;
                 (ParameterKind::Value { ty }, end)
             };
-            params.push(Parameter { name, kind, span: Span::with_pos(parameter_start.start, end, parameter_start.line, parameter_start.column) });
+            params.push(Parameter {
+                name,
+                kind,
+                span: Span::with_pos(
+                    parameter_start.start,
+                    end,
+                    parameter_start.line,
+                    parameter_start.column,
+                ),
+            });
             if self.at(TokenKind::Comma) { self.bump(); if self.at(TokenKind::RParen) { break; } } else { break; }
         }
         Ok(params)
@@ -685,7 +702,10 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         if self.at_word("move") {
             let start = self.expect_word("move")?.span;
             let target = self.expect_identifier_token()?;
-            let target_name = match target.kind { TokenKind::Identifier(name) => name, _ => unreachable!() };
+            let target_name = match target.kind {
+                TokenKind::Identifier(name) => name,
+                _ => unreachable!(),
+            };
             return Ok(Expression::Move {
                 value: Box::new(Expression::Identifier(target_name, target.span)),
                 span: span_from_origin(start, target.span.end),
