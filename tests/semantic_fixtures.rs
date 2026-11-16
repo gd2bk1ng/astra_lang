@@ -1680,3 +1680,31 @@ fn capability_parameter_does_not_shadow_ordinary_callable_binding() {
         report.diagnostics
     );
 }
+
+
+#[test]
+fn duplicate_parameter_names_are_rejected_across_value_and_capability_kinds() {
+    let source = "fn worker(value: Integer, value: Cap<WriteFile>) { }";
+    let report = verify(source);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "SYN2003"),
+        "the parameter namespace must cover both value and capability parameters: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn callable_diagnostic_order_preserves_value_then_capability_then_effect_checks() {
+    let source = concat!(
+        "fn worker(value: Integer, authority: Cap<WriteFile>) effects { ReadFile } { }\n",
+        "fn caller() { worker(\"wrong\", authority); }\n",
+    );
+    let report = verify(source);
+    let codes = report
+        .diagnostics
+        .iter()
+        .filter(|d| ["SYN2403", "SYN2110", "SYN2105"].contains(&d.code))
+        .map(|d| d.code)
+        .collect::<Vec<_>>();
+    assert_eq!(codes, vec!["SYN2403", "SYN2110", "SYN2105"]);
+}

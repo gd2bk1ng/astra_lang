@@ -196,3 +196,12 @@ fn parser_rejects_capability_marker_nested_in_value_types() {
     let mut parser = Parser::new(&tokens);
     assert!(parser.parse_program().is_err());
 }
+
+
+#[test]
+fn parser_reserves_move_in_expression_position() {
+    let source = "fn caller() { move(); }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    assert!(parser.parse_program().is_err());
+}
