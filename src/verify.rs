@@ -604,7 +604,7 @@ impl<'src> SemanticVerifier<'src> {
                                     "capability parameter '{}' uses unknown capability kind '{}'",
                                     parameter.name, capability.capability_name
                                 ),
-                                capability.span,
+                                parameter.span,
                             );
                         }
                         CallableParameterKind::Capability {
@@ -1390,8 +1390,11 @@ impl<'src> SemanticVerifier<'src> {
                             self.error(
                                 CODE_CAPABILITY_MOVE_REQUIRED,
                                 format!(
-                                    "capability parameter '{}' requires an explicit move expression",
-                                    parameter.name
+                                    "capability parameter '{}' of kind '{}' (declared at {}:{}) requires an explicit move expression",
+                                    parameter.name,
+                                    required.capability.as_str(),
+                                    required.span.line,
+                                    required.span.column,
                                 ),
                                 expression_span(argument),
                             );

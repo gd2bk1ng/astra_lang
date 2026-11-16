@@ -1647,7 +1647,10 @@ fn unknown_capability_parameter_kind_is_rejected_without_value_fallback() {
     let source = "fn worker(authority: Cap<UnknownAuthority>) { }";
     let report = verify(source);
     let diagnostic = report.diagnostics.iter().find(|d| d.code == "SYN2117").expect("unknown kind rejected");
-    assert_eq!(&source[diagnostic.span.start..diagnostic.span.end], "Cap<UnknownAuthority>");
+    assert_eq!(
+        &source[diagnostic.span.start..diagnostic.span.end],
+        "authority: Cap<UnknownAuthority>"
+    );
 }
 
 #[test]
