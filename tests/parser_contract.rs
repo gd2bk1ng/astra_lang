@@ -187,3 +187,12 @@ fn parser_rejects_malformed_capability_parameter_types() {
         assert!(parser.parse_program().is_err(), "must reject: {source}");
     }
 }
+
+
+#[test]
+fn parser_rejects_capability_marker_nested_in_value_types() {
+    let source = "fn invalid(value: Map<Cap<ReadFile>>) { }";
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let mut parser = Parser::new(&tokens);
+    assert!(parser.parse_program().is_err());
+}

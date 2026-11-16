@@ -630,6 +630,12 @@ impl<'tokens, 'src> Parser<'tokens, 'src> {
         let start = self.current_span().map(|s| s.start).unwrap_or(0);
         let name = match self.current() {
             Some(token) => match token.kind {
+                TokenKind::Identifier("Cap") => {
+                    return Err(ParseError::unexpected(
+                        "ordinary type (Cap is reserved for capability parameters)",
+                        token,
+                    ));
+                }
                 TokenKind::Identifier(name) => { self.bump(); name }
                 TokenKind::IntLiteral(_) => { let lexeme = token.lexeme; self.bump(); lexeme }
                 TokenKind::FloatLiteral(_) => { let lexeme = token.lexeme; self.bump(); lexeme }

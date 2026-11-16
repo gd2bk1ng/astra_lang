@@ -119,7 +119,6 @@ Type ::= BaseType
        | Type "->" EffectAnnotation Type
        | "Mut" "<" Type ">"
        | "Ref" "<" Type ">"
-       | "Cap" "<" Type ">"
        | "Tensor" "<" Shape "," DType ">"
        | "Symbolic" "<" Prop ">"
        | "Grad" "<" Type ">"
