@@ -318,6 +318,7 @@ impl CapabilityLedger {
     /// Move an available instance into an in-transit state.
     pub fn enter_transit(
         &mut self,
+        owner: CapabilityOwnerId,
         id: CapabilityInstanceId,
         call_id: u64,
     ) -> Result<(), CapabilityError> {
@@ -325,6 +326,13 @@ impl CapabilityLedger {
             .instances
             .get_mut(&id)
             .ok_or(CapabilityError::UnknownInstance(id))?;
+
+        if instance.owner != owner {
+            return Err(CapabilityError::OwnerMismatch {
+                instance: id,
+                owner,
+            });
+        }
 
         match instance.state {
             CapabilityState::Available => {
@@ -339,6 +347,7 @@ impl CapabilityLedger {
     /// Consume an in-transit instance irreversibly.
     pub fn consume(
         &mut self,
+        owner: CapabilityOwnerId,
         id: CapabilityInstanceId,
         call_id: u64,
         consumed_at: Span,
@@ -347,6 +356,13 @@ impl CapabilityLedger {
             .instances
             .get_mut(&id)
             .ok_or(CapabilityError::UnknownInstance(id))?;
+
+        if instance.owner != owner {
+            return Err(CapabilityError::OwnerMismatch {
+                instance: id,
+                owner,
+            });
+        }
 
         match instance.state {
             CapabilityState::Available => Err(CapabilityError::NotInTransit(id)),
@@ -367,6 +383,10 @@ pub enum CapabilityError {
     IdExhausted,
     UnknownOwner(CapabilityOwnerId),
     UnknownInstance(CapabilityInstanceId),
+    OwnerMismatch {
+        instance: CapabilityInstanceId,
+        owner: CapabilityOwnerId,
+    },
     AlreadyInTransit(CapabilityInstanceId),
     NotInTransit(CapabilityInstanceId),
     AlreadyConsumed(CapabilityInstanceId),
@@ -2086,14 +2106,16 @@ mod callable_effect_context_tests {
 
         assert_eq!(ledger.instance(instance).unwrap().state(), CapabilityState::Available);
 
-        ledger.enter_transit(instance, 41).expect("available instance enters transit");
+        ledger
+            .enter_transit(owner, instance, 41)
+            .expect("available instance enters transit");
         assert_eq!(
             ledger.instance(instance).unwrap().state(),
             CapabilityState::InTransit { call_id: 41 }
         );
 
         ledger
-            .consume(instance, 41, Span::new(50, 58))
+            .consume(owner, instance, 41, Span::new(50, 58))
             .expect("in-transit instance can be consumed");
         assert_eq!(
             ledger.instance(instance).unwrap().state(),
@@ -2112,17 +2134,19 @@ mod callable_effect_context_tests {
             .provision(CapabilityId::SelfModify, owner, Span::new(0, 8))
             .expect("instance provision succeeds");
 
-        ledger.enter_transit(instance, 7).expect("instance enters transit");
         ledger
-            .consume(instance, 7, Span::new(20, 28))
+            .enter_transit(owner, instance, 7)
+            .expect("instance enters transit");
+        ledger
+            .consume(owner, instance, 7, Span::new(20, 28))
             .expect("instance is consumed");
 
         assert_eq!(
-            ledger.enter_transit(instance, 8),
+            ledger.enter_transit(owner, instance, 8),
             Err(CapabilityError::AlreadyConsumed(instance))
         );
         assert_eq!(
-            ledger.consume(instance, 8, Span::new(40, 48)),
+            ledger.consume(owner, instance, 8, Span::new(40, 48)),
             Err(CapabilityError::AlreadyConsumed(instance))
         );
         assert_eq!(
@@ -2141,12 +2165,14 @@ mod callable_effect_context_tests {
         let instance = ledger
             .provision(CapabilityId::WriteFile, owner, Span::new(0, 8))
             .expect("instance provision succeeds");
-        ledger.enter_transit(instance, 1).expect("instance enters transit");
+        ledger
+            .enter_transit(owner, instance, 1)
+            .expect("instance enters transit");
 
         let state = ledger.instance(instance).unwrap().state();
         assert_eq!(state, CapabilityState::InTransit { call_id: 1 });
         assert_eq!(
-            ledger.consume(instance, 1, Span::new(10, 18)),
+            ledger.consume(owner, instance, 1, Span::new(10, 18)),
             Ok(())
         );
         assert_eq!(
@@ -2183,5 +2209,76 @@ mod callable_effect_context_tests {
             .expect("child-owned instance provision succeeds");
 
         assert_ne!(ledger.instance(first).unwrap().owner(), ledger.instance(second).unwrap().owner());
+    }
+
+    #[test]
+    fn capability_transitions_require_authoritative_owner() {
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let other = ledger.create_owner().expect("second owner allocation succeeds");
+        let instance = ledger
+            .provision(CapabilityId::SelfModify, root, Span::new(0, 8))
+            .expect("instance provision succeeds");
+
+        assert_eq!(
+            ledger.enter_transit(other, instance, 9),
+            Err(CapabilityError::OwnerMismatch {
+                instance,
+                owner: other,
+            })
+        );
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::Available
+        );
+
+        ledger
+            .enter_transit(root, instance, 9)
+            .expect("authorized owner can enter transit");
+
+        assert_eq!(
+            ledger.consume(other, instance, 9, Span::new(20, 28)),
+            Err(CapabilityError::OwnerMismatch {
+                instance,
+                owner: other,
+            })
+        );
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::InTransit { call_id: 9 }
+        );
+
+        ledger
+            .consume(root, instance, 9, Span::new(20, 28))
+            .expect("authorized owner can consume");
+        assert_eq!(
+            ledger.instance(instance).unwrap().state(),
+            CapabilityState::Consumed {
+                call_id: 9,
+                consumed_at: Span::new(20, 28),
+            }
+        );
+    }
+
+    #[test]
+    fn unauthorized_transition_does_not_mutate_ledger_state() {
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let other = ledger.create_owner().expect("second owner allocation succeeds");
+        let instance = ledger
+            .provision(CapabilityId::ReadFile, root, Span::new(0, 8))
+            .expect("instance provision succeeds");
+
+        let before = ledger.instance(instance).unwrap().state();
+        let result = ledger.consume(other, instance, 1, Span::new(10, 18));
+
+        assert_eq!(
+            result,
+            Err(CapabilityError::OwnerMismatch {
+                instance,
+                owner: other,
+            })
+        );
+        assert_eq!(ledger.instance(instance).unwrap().state(), before);
     }
 }
