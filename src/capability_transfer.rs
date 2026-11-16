@@ -611,6 +611,7 @@ mod diagnostic_mapping_tests {
 
         let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
         verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+        verifier.capability_ledger_mut().transfer_batch(root, owner, invocation, &[instance]).unwrap();
         let report = verifier.verify_program(&ast);
         assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2112"));
     }}
