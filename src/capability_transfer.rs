@@ -607,8 +607,6 @@ mod diagnostic_mapping_tests {
         let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
         let owner = ledger.create_owner().unwrap();
         let invocation = ledger.create_invocation(owner, None).unwrap();
-        ledger.transfer_batch(root, owner, invocation, &[instance]).unwrap();
-
         let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
         verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
         verifier.capability_ledger_mut().transfer_batch(root, owner, invocation, &[instance]).unwrap();
