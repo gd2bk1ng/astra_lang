@@ -248,3 +248,98 @@ fn expression_span(expression: &Expression<'_>) -> Span {
         Expression::Block(block) => block.span,
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::verify::SemanticVerifier;
+
+    fn span(start: usize, end: usize) -> Span {
+        Span::new(start, end)
+    }
+
+    fn move_arg(name: &'static str, start: usize) -> Expression<'static> {
+        Expression::Move {
+            value: Box::new(Expression::Identifier(name, span(start + 5, start + 6))),
+            span: span(start, start + 6),
+        }
+    }
+
+    #[test]
+    fn static_plan_resolves_existing_binding_without_mutating_ledger() {
+        let mut verifier = SemanticVerifier::new("");
+        let root = verifier.capability_ledger().root_owner();
+        let instance = verifier.capability_ledger_mut()
+            .provision(CapabilityId::ReadFile, root, span(0, 4)).unwrap();
+        verifier.bind_root_capability("reader", instance, span(0, 6)).unwrap();
+
+        let before = verifier.capability_ledger().instance(instance).unwrap().state();
+        let arguments = vec![move_arg("reader", 20)];
+        let parameters = [IndexedCapabilityParameter {
+            parameter_index: 0,
+            spec: CapabilityParameterSpec {
+                name: "file_access",
+                kind: CapabilityId::ReadFile,
+                declaration_span: span(5, 25),
+            },
+        }];
+
+        let plan = build_static_transfer_plan(
+            "read_document", root, span(15, 30), &arguments, &parameters,
+            verifier.capability_environment(), verifier.capability_ledger(),
+        ).unwrap();
+
+        assert_eq!(plan.callee(), "read_document");
+        assert_eq!(plan.items().len(), 1);
+        assert_eq!(plan.items()[0].instance, instance);
+        assert_eq!(verifier.capability_ledger().instance(instance).unwrap().state(), before);
+        assert_eq!(verifier.capability_ledger().instance(instance).unwrap().owner(), root);
+    }
+
+    #[test]
+    fn static_plan_rejects_wrong_kind_and_duplicate_instance() {
+        let mut verifier = SemanticVerifier::new("");
+        let root = verifier.capability_ledger().root_owner();
+        let instance = verifier.capability_ledger_mut()
+            .provision(CapabilityId::ReadFile, root, span(0, 4)).unwrap();
+        verifier.bind_root_capability("reader", instance, span(0, 6)).unwrap();
+
+        let arguments = vec![move_arg("reader", 20), move_arg("reader", 40)];
+        let parameters = [
+            IndexedCapabilityParameter {
+                parameter_index: 0,
+                spec: CapabilityParameterSpec { name: "first", kind: CapabilityId::ReadFile, declaration_span: span(1, 8) },
+            },
+            IndexedCapabilityParameter {
+                parameter_index: 1,
+                spec: CapabilityParameterSpec { name: "second", kind: CapabilityId::ReadFile, declaration_span: span(9, 16) },
+            },
+        ];
+
+        let errors = build_static_transfer_plan(
+            "combine", root, span(15, 50), &arguments, &parameters,
+            verifier.capability_environment(), verifier.capability_ledger(),
+        ).unwrap_err();
+
+        assert!(errors.iter().any(|error| matches!(error, CapabilityPrecommitError::DuplicateInstance { .. })));
+        assert_eq!(verifier.capability_ledger().instance(instance).unwrap().state(), CapabilityState::Available);
+    }
+
+    #[test]
+    fn static_plan_reports_missing_capability_parameter() {
+        let verifier = SemanticVerifier::new("");
+        let root = verifier.capability_ledger().root_owner();
+        let parameters = [IndexedCapabilityParameter {
+            parameter_index: 0,
+            spec: CapabilityParameterSpec { name: "authority", kind: CapabilityId::SelfModify, declaration_span: span(4, 20) },
+        }];
+
+        let errors = build_static_transfer_plan(
+            "mutate", root, span(0, 8), &[], &parameters,
+            verifier.capability_environment(), verifier.capability_ledger(),
+        ).unwrap_err();
+
+        assert!(matches!(errors.as_slice(), [CapabilityPrecommitError::MissingCapabilityArgument { .. }]));
+    }
+}
