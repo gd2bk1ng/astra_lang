@@ -612,4 +612,5 @@ mod diagnostic_mapping_tests {
         verifier.capability_ledger_mut().transfer_batch(root, owner, invocation, &[instance]).unwrap();
         let report = verifier.verify_program(&ast);
         assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2112"));
-    }}
+    }
+}
