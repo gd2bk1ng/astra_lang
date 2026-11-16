@@ -709,6 +709,7 @@ pub struct SemanticVerifier<'src> {
     diagnostics: Vec<Diagnostic<'src>>,
     capability_transfer_plans: Vec<CapabilityTransferPlan<'src>>,
     symbolic_capabilities: BTreeMap<&'src str, CapabilityId>,
+    in_callable_body: bool,
     declared_effects: BTreeSet<EffectId>,
     capability_ledger: CapabilityLedger,
     capability_environment: CapabilityEnvironment<'src>,
@@ -732,6 +733,7 @@ impl<'src> SemanticVerifier<'src> {
             diagnostics: Vec::new(),
             capability_transfer_plans: Vec::new(),
             symbolic_capabilities: BTreeMap::new(),
+            in_callable_body: false,
             declared_effects: BTreeSet::new(),
             capability_ledger,
             capability_environment: CapabilityEnvironment::new(root_owner),
@@ -937,6 +939,7 @@ impl<'src> SemanticVerifier<'src> {
     fn verify_function(&mut self, function: &Function<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
         let previous_symbolic_capabilities = std::mem::take(&mut self.symbolic_capabilities);
+        let previous_callable_body = std::mem::replace(&mut self.in_callable_body, true);
         self.symbolic_capabilities = self.callable_registry.get(function.name)
             .map(|signature| signature.parameters.iter().filter_map(|parameter| {
                 match &parameter.kind {
@@ -985,12 +988,14 @@ impl<'src> SemanticVerifier<'src> {
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
         self.symbolic_capabilities = previous_symbolic_capabilities;
+        self.in_callable_body = previous_callable_body;
         self.declared_effects = previous_effects;
     }
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
         let previous_symbolic_capabilities = std::mem::take(&mut self.symbolic_capabilities);
+        let previous_callable_body = std::mem::replace(&mut self.in_callable_body, true);
         self.symbolic_capabilities = self.callable_registry.get(rule.name)
             .map(|signature| signature.parameters.iter().filter_map(|parameter| {
                 match &parameter.kind {
@@ -1039,6 +1044,7 @@ impl<'src> SemanticVerifier<'src> {
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
         self.symbolic_capabilities = previous_symbolic_capabilities;
+        self.in_callable_body = previous_callable_body;
         self.declared_effects = previous_effects;
     }
 
@@ -1747,6 +1753,16 @@ impl<'src> SemanticVerifier<'src> {
                                 *move_span,
                             );
                         }
+                    } else if self.in_callable_body {
+                        // Callable bodies have only their declared symbolic
+                        // capability parameters; root/ambient host bindings are
+                        // not implicitly inherited by nested call sites.
+                        is_valid = false;
+                        self.error(
+                            CODE_CAPABILITY_UNAVAILABLE,
+                            format!("move source '{source_name}' is not a capability parameter owned by this callable"),
+                            *move_span,
+                        );
                     }
                 }
 
@@ -1755,7 +1771,7 @@ impl<'src> SemanticVerifier<'src> {
                 // deferred: static body checking cannot manufacture runtime instances.
                 let concrete_parameters: Vec<_> = indexed_capability_parameters.iter()
                     .copied()
-                    .filter(|indexed| {
+                    .filter(|indexed| !self.in_callable_body && {
                         arguments.get(indexed.parameter_index).is_some_and(|argument| {
                             matches!(argument, Expression::Move { value, .. }
                                 if matches!(value.as_ref(), Expression::Identifier(name, _) if !self.symbolic_capabilities.contains_key(name)))
