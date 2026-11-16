@@ -503,8 +503,7 @@ mod call_site_integration_tests {
     fn callable_body_cannot_capture_root_host_capability_implicitly() {
         let source = concat!(
             "fn worker(file: Cap<ReadFile>) { }\n",
-            "fn outer() { worker(move reader); }\n",
-            "intent task { }",
+            "fn outer() { worker(move reader); }",
         );
         let (_tokens, ast) = program(source);
         let mut ledger = CapabilityLedger::new();
