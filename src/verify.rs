@@ -12,6 +12,10 @@ use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
 use crate::epistemic::{EpistemicBinding, EpistemicEnvironment, EpistemicState};
 use crate::tokens::Span;
+use crate::capability_transfer::{
+    build_static_transfer_plan, CapabilityParameterSpec, CapabilityPrecommitError,
+    CapabilityTransferPlan, IndexedCapabilityParameter,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 const CODE_EPISTEMIC_RANGE: &str = "SYN2001";
@@ -23,6 +27,12 @@ const CODE_CAPABILITY_LEAK: &str = "SYN2103";
 const CODE_EFFECT_UNKNOWN: &str = "SYN2104";
 const CODE_CALL_EFFECT_REQUIRED: &str = "SYN2105";
 const CODE_CAPABILITY_MOVE_REQUIRED: &str = "SYN2110";
+const CODE_CAPABILITY_KIND_MISMATCH: &str = "SYN2111";
+const CODE_CAPABILITY_UNAVAILABLE: &str = "SYN2112";
+const CODE_CAPABILITY_CONSUMED: &str = "SYN2113";
+const CODE_CAPABILITY_DUPLICATE_MOVE: &str = "SYN2114";
+const CODE_CAPABILITY_IN_TRANSIT: &str = "SYN2115";
+const CODE_CAPABILITY_ARGUMENT_MISSING: &str = "SYN2116";
 const CODE_CAPABILITY_PARAMETER_INVALID: &str = "SYN2117";
 
 /// Canonical identities for the closed built-in effect vocabulary.
@@ -611,6 +621,8 @@ pub enum CapabilityBindingError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticReport<'a> {
     pub diagnostics: Vec<Diagnostic<'a>>,
+    /// Immutable static precommit plans. These are not runtime transfers.
+    pub capability_transfer_plans: Vec<CapabilityTransferPlan<'a>>,
 }
 
 impl<'a> SemanticReport<'a> {
@@ -624,6 +636,10 @@ impl<'a> SemanticReport<'a> {
         self.diagnostics
             .iter()
             .filter(|diagnostic| diagnostic.severity == crate::diagnostics::DiagnosticSeverity::Error)
+    }
+
+    pub fn capability_transfer_plans(&self) -> &[CapabilityTransferPlan<'a>] {
+        &self.capability_transfer_plans
     }
 }
 
@@ -691,6 +707,8 @@ struct NumericConstraint {
 pub struct SemanticVerifier<'src> {
     source: &'src str,
     diagnostics: Vec<Diagnostic<'src>>,
+    capability_transfer_plans: Vec<CapabilityTransferPlan<'src>>,
+    symbolic_capabilities: BTreeMap<&'src str, CapabilityId>,
     declared_effects: BTreeSet<EffectId>,
     capability_ledger: CapabilityLedger,
     capability_environment: CapabilityEnvironment<'src>,
@@ -712,6 +730,8 @@ impl<'src> SemanticVerifier<'src> {
         Self {
             source,
             diagnostics: Vec::new(),
+            capability_transfer_plans: Vec::new(),
+            symbolic_capabilities: BTreeMap::new(),
             declared_effects: BTreeSet::new(),
             capability_ledger,
             capability_environment: CapabilityEnvironment::new(root_owner),
@@ -771,6 +791,7 @@ impl<'src> SemanticVerifier<'src> {
 
         SemanticReport {
             diagnostics: self.diagnostics,
+            capability_transfer_plans: self.capability_transfer_plans,
         }
     }
 
@@ -915,6 +936,16 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_function(&mut self, function: &Function<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
+        let previous_symbolic_capabilities = std::mem::take(&mut self.symbolic_capabilities);
+        self.symbolic_capabilities = self.callable_registry.get(function.name)
+            .map(|signature| signature.parameters.iter().filter_map(|parameter| {
+                match &parameter.kind {
+                    CallableParameterKind::Capability { capability: Some(capability) } =>
+                        Some((parameter.name, capability.capability)),
+                    _ => None,
+                }
+            }).collect())
+            .unwrap_or_default();
         self.declared_effects = self
             .callable_registry
             .get(function.name)
@@ -953,11 +984,22 @@ impl<'src> SemanticVerifier<'src> {
 
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
+        self.symbolic_capabilities = previous_symbolic_capabilities;
         self.declared_effects = previous_effects;
     }
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
+        let previous_symbolic_capabilities = std::mem::take(&mut self.symbolic_capabilities);
+        self.symbolic_capabilities = self.callable_registry.get(rule.name)
+            .map(|signature| signature.parameters.iter().filter_map(|parameter| {
+                match &parameter.kind {
+                    CallableParameterKind::Capability { capability: Some(capability) } =>
+                        Some((parameter.name, capability.capability)),
+                    _ => None,
+                }
+            }).collect())
+            .unwrap_or_default();
         self.declared_effects = self
             .callable_registry
             .get(rule.name)
@@ -996,6 +1038,7 @@ impl<'src> SemanticVerifier<'src> {
 
         self.expected_return_type = previous_return_type;
         self.epistemic_environment = EpistemicEnvironment::new();
+        self.symbolic_capabilities = previous_symbolic_capabilities;
         self.declared_effects = previous_effects;
     }
 
@@ -1633,27 +1676,107 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
 
-                for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
-                    if let CallableParameterKind::Capability {
-                        capability: Some(required),
-                    } = &parameter.kind
-                    {
-                        // Canonical kind matching against a source authority
-                        // instance belongs to the transfer-validation phase.
-                        let _required_kind = required.capability;
-                        let _declaration_span = required.span;
-                        if !matches!(argument, Expression::Move { .. }) {
+                let mut indexed_capability_parameters = Vec::new();
+                let mut has_symbolic_capability_argument = false;
+                let mut symbolic_seen = BTreeMap::<&'src str, Span>::new();
+
+                for (parameter_index, parameter) in signature.parameters.iter().enumerate() {
+                    let CallableParameterKind::Capability { capability: Some(required) } = &parameter.kind else {
+                        continue;
+                    };
+                    indexed_capability_parameters.push(IndexedCapabilityParameter {
+                        parameter_index,
+                        spec: CapabilityParameterSpec {
+                            name: parameter.name,
+                            kind: required.capability,
+                            declaration_span: parameter.span,
+                        },
+                    });
+
+                    let Some(argument) = arguments.get(parameter_index) else {
+                        // Arity diagnostics are emitted independently above.
+                        // SYN2116 additionally identifies the omitted authority slot.
+                        self.error(
+                            CODE_CAPABILITY_ARGUMENT_MISSING,
+                            format!("call to '{}' omits required capability parameter '{}' of kind '{}'",
+                                signature.name, parameter.name, required.capability.as_str()),
+                            *span,
+                        );
+                        continue;
+                    };
+
+                    let Expression::Move { value, span: move_span } = argument else {
+                        self.error(
+                            CODE_CAPABILITY_MOVE_REQUIRED,
+                            format!("capability parameter '{}' of kind '{}' requires an explicit move expression",
+                                parameter.name, required.capability.as_str()),
+                            expression_span(argument),
+                        );
+                        continue;
+                    };
+                    let Expression::Identifier(source_name, _) = value.as_ref() else {
+                        self.error(
+                            CODE_CAPABILITY_UNAVAILABLE,
+                            format!("move argument for capability parameter '{}' must name an available owned capability binding",
+                                parameter.name),
+                            *move_span,
+                        );
+                        continue;
+                    };
+
+                    if let Some(symbolic_kind) = self.symbolic_capabilities.get(source_name).copied() {
+                        has_symbolic_capability_argument = true;
+                        if symbolic_kind != required.capability {
                             self.error(
-                                CODE_CAPABILITY_MOVE_REQUIRED,
-                                format!(
-                                    "capability parameter '{}' of kind '{}' (declared at {}:{}) requires an explicit move expression",
-                                    parameter.name,
-                                    required.capability.as_str(),
-                                    required.span.line,
-                                    required.span.column,
-                                ),
-                                expression_span(argument),
+                                CODE_CAPABILITY_KIND_MISMATCH,
+                                format!("capability '{}' has kind '{}', but parameter '{}' requires '{}'",
+                                    source_name, symbolic_kind.as_str(), parameter.name, required.capability.as_str()),
+                                *move_span,
                             );
+                        }
+                        if let Some(first_span) = symbolic_seen.insert(source_name, *move_span) {
+                            let _ = first_span;
+                            self.error(
+                                CODE_CAPABILITY_DUPLICATE_MOVE,
+                                format!("capability parameter '{}' is moved more than once in the same call", source_name),
+                                *move_span,
+                            );
+                        }
+                    }
+                }
+
+                // Concrete source bindings are resolved against the host ledger.
+                // Symbolic callable parameters are validated above and deliberately
+                // deferred: static body checking cannot manufacture runtime instances.
+                let concrete_parameters: Vec<_> = indexed_capability_parameters.iter()
+                    .copied()
+                    .filter(|indexed| {
+                        arguments.get(indexed.parameter_index).is_some_and(|argument| {
+                            matches!(argument, Expression::Move { value, .. }
+                                if matches!(value.as_ref(), Expression::Identifier(name, _) if !self.symbolic_capabilities.contains_key(name)))
+                        })
+                    })
+                    .collect();
+
+                if !concrete_parameters.is_empty() {
+                    match build_static_transfer_plan(
+                        signature.name,
+                        self.capability_environment.active_owner(),
+                        *span,
+                        arguments,
+                        &concrete_parameters,
+                        &self.capability_environment,
+                        &self.capability_ledger,
+                    ) {
+                        Ok(plan) => {
+                            if !has_symbolic_capability_argument {
+                                self.capability_transfer_plans.push(plan);
+                            }
+                        }
+                        Err(errors) => {
+                            for error in errors {
+                                self.emit_capability_precommit_error(error);
+                            }
                         }
                     }
                 }
@@ -1686,6 +1809,52 @@ impl<'src> SemanticVerifier<'src> {
         }
 
         ExpressionValidation { inferred_type, is_valid }
+    }
+
+    fn emit_capability_precommit_error(&mut self, error: CapabilityPrecommitError<'src>) {
+        match error {
+            CapabilityPrecommitError::MissingCapabilityArgument { parameter, call_span, .. } => {
+                self.error(CODE_CAPABILITY_ARGUMENT_MISSING,
+                    format!("required capability parameter '{parameter}' is omitted"), call_span);
+            }
+            CapabilityPrecommitError::MoveRequired { parameter, required_kind, argument_span, .. } => {
+                self.error(CODE_CAPABILITY_MOVE_REQUIRED,
+                    format!("capability parameter '{parameter}' of kind '{}' requires an explicit move expression", required_kind.as_str()), argument_span);
+            }
+            CapabilityPrecommitError::MoveTargetMustBeIdentifier { argument_span } => {
+                self.error(CODE_CAPABILITY_UNAVAILABLE,
+                    "move target must be a directly named capability binding", argument_span);
+            }
+            CapabilityPrecommitError::UnboundSource { source_name, argument_span } => {
+                self.error(CODE_CAPABILITY_UNAVAILABLE,
+                    format!("move source '{source_name}' is not bound to a host-provisioned capability"), argument_span);
+            }
+            CapabilityPrecommitError::WrongOwner { source_name, argument_span, .. } => {
+                self.error(CODE_CAPABILITY_UNAVAILABLE,
+                    format!("move source '{source_name}' is not owned by the active caller"), argument_span);
+            }
+            CapabilityPrecommitError::Unavailable { source_name, state, argument_span } => {
+                let (code, state_text) = match state {
+                    CapabilityState::Consumed { .. } => (CODE_CAPABILITY_CONSUMED, "consumed"),
+                    CapabilityState::InTransit { .. } => (CODE_CAPABILITY_IN_TRANSIT, "already in transit"),
+                    CapabilityState::Abandoned { .. } => (CODE_CAPABILITY_UNAVAILABLE, "abandoned"),
+                    CapabilityState::Available => (CODE_CAPABILITY_UNAVAILABLE, "unavailable"),
+                };
+                self.error(code, format!("move source '{source_name}' is {state_text}"), argument_span);
+            }
+            CapabilityPrecommitError::KindMismatch { source_name, actual, required, argument_span } => {
+                self.error(CODE_CAPABILITY_KIND_MISMATCH,
+                    format!("capability '{source_name}' has kind '{}', but the parameter requires '{}'", actual.as_str(), required.as_str()), argument_span);
+            }
+            CapabilityPrecommitError::DuplicateInstance { source_name, duplicate_argument_span, .. } => {
+                self.error(CODE_CAPABILITY_DUPLICATE_MOVE,
+                    format!("capability instance bound as '{source_name}' is moved more than once in the same call"), duplicate_argument_span);
+            }
+            CapabilityPrecommitError::Ledger(_) => {
+                self.error(CODE_CAPABILITY_UNAVAILABLE,
+                    "capability ledger could not resolve the requested move", Span::new(0, 0));
+            }
+        }
     }
 
     fn verify_effect_for_operation(&mut self, operation: &str, span: Span) {
