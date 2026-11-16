@@ -499,6 +499,25 @@ mod call_site_integration_tests {
         assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2105"));
         assert!(report.capability_transfer_plans().is_empty());
     }
+    #[test]
+    fn callable_body_cannot_capture_root_host_capability_implicitly() {
+        let source = concat!(
+            "fn worker(file: Cap<ReadFile>) { }\n",
+            "fn outer() { worker(move reader); }\n",
+            "intent task { }",
+        );
+        let (_tokens, ast) = program(source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+
+        let report = verifier.verify_program(&ast);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2112"));
+        assert!(report.capability_transfer_plans().is_empty());
+    }
+
 }
 
 #[cfg(test)]
