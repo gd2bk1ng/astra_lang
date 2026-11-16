@@ -433,7 +433,13 @@ mod call_site_integration_tests {
         let report = verifier.verify_program(&program);
         assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
         assert_eq!(report.capability_transfer_plans().len(), 1);
-        assert_eq!(report.capability_transfer_plans()[0].items()[0].instance, instance);
+        assert_eq!(
+            report.capability_transfer_plans()[0].items()[0].source,
+            CapabilityTransferSource::HostBinding {
+                instance,
+                owner: root,
+            }
+        );
         // The report contains a plan, not an applied transfer. The direct
         // builder tests separately assert that ledger state remains unchanged.
     }
@@ -462,7 +468,18 @@ mod call_site_integration_tests {
         let report = SemanticVerifier::new(source).verify_program(&program);
 
         assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
-        assert!(report.capability_transfer_plans().is_empty());
+        assert_eq!(report.capability_transfer_plans().len(), 1);
+        assert_eq!(
+            report.capability_transfer_plans()[0].caller_context(),
+            CapabilityOwnerContext::Callable
+        );
+        assert_eq!(
+            report.capability_transfer_plans()[0].items()[0].source,
+            CapabilityTransferSource::CallableParameter {
+                name: "file",
+                declared_kind: CapabilityId::ReadFile,
+            }
+        );
     }
 
     #[test]
