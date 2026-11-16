@@ -372,19 +372,8 @@ mod call_site_integration_tests {
         assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
         assert_eq!(report.capability_transfer_plans().len(), 1);
         assert_eq!(report.capability_transfer_plans()[0].items()[0].instance, instance);
-        assert_eq!(
-            verifier_state_after_verification(&report, instance),
-            CapabilityState::Available
-        );
-    }
-
-    fn verifier_state_after_verification(
-        _report: &crate::SemanticReport<'_>,
-        _instance: CapabilityInstanceId,
-    ) -> CapabilityState {
-        // The report intentionally contains plans only; ledger neutrality is
-        // independently covered by the direct plan-builder tests above.
-        CapabilityState::Available
+        // The report contains a plan, not an applied transfer. The direct
+        // builder tests separately assert that ledger state remains unchanged.
     }
 
     #[test]
