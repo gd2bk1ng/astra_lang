@@ -91,7 +91,7 @@ pub enum CapabilityPrecommitError<'a> {
         first_argument_span: Span,
         duplicate_argument_span: Span,
     },
-    Ledger(CapabilityError),
+    Ledger { error: CapabilityError, argument_span: Span },
 }
 
 /// Validate positional capability arguments without changing ledger or bindings.
@@ -171,7 +171,10 @@ pub fn build_static_transfer_plan<'a>(
         let instance = match ledger.instance(binding.instance()) {
             Ok(instance) => instance,
             Err(error) => {
-                errors.push(CapabilityPrecommitError::Ledger(error));
+                errors.push(CapabilityPrecommitError::Ledger {
+                    error,
+                    argument_span: move_span,
+                });
                 continue;
             }
         };
@@ -436,7 +439,6 @@ mod diagnostic_mapping_tests {
     fn report_with_instance<'a>(
         source: &'a str,
         instance_kind: CapabilityId,
-        parameter_kind: &'static str,
         bind_name: &'static str,
     ) -> crate::SemanticReport<'a> {
         let (_tokens, ast) = program(source);
@@ -445,7 +447,6 @@ mod diagnostic_mapping_tests {
         let instance = ledger.provision(instance_kind, root, Span::new(0, 0)).unwrap();
         let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
         verifier.bind_root_capability(bind_name, instance, Span::new(0, 0)).unwrap();
-        let _ = parameter_kind;
         verifier.verify_program(&ast)
     }
 
@@ -471,7 +472,6 @@ mod diagnostic_mapping_tests {
         let report = report_with_instance(
             mismatch_source,
             CapabilityId::ReadFile,
-            "WriteFile",
             "reader",
         );
         assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2111"));
