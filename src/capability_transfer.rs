@@ -596,30 +596,21 @@ mod diagnostic_mapping_tests {
     }
 
     #[test]
-    fn call_site_maps_consumed_and_in_transit_authority() {
+    fn host_binding_is_unavailable_after_authority_moves_to_an_invocation() {
         let source = concat!(
             "fn worker(file: Cap<ReadFile>) { }\n",
             "intent task { workspace { worker(move reader); } }",
         );
         let (_tokens, ast) = program(source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let owner = ledger.create_owner().unwrap();
+        let invocation = ledger.create_invocation(owner, None).unwrap();
+        ledger.transfer_batch(root, owner, invocation, &[instance]).unwrap();
 
-        let mut consumed_ledger = CapabilityLedger::new();
-        let root = consumed_ledger.root_owner();
-        let consumed = consumed_ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
-        let mut consumed_verifier = SemanticVerifier::with_capability_ledger(source, consumed_ledger);
-        consumed_verifier.bind_root_capability("reader", consumed, Span::new(0, 0)).unwrap();
-        consumed_verifier.capability_ledger_mut().enter_transit(root, consumed, 77).unwrap();
-        consumed_verifier.capability_ledger_mut().consume(root, consumed, 77, Span::new(10, 20)).unwrap();
-        let consumed_report = consumed_verifier.verify_program(&ast);
-        assert!(consumed_report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2113"));
-
-        let mut transit_ledger = CapabilityLedger::new();
-        let root = transit_ledger.root_owner();
-        let transit = transit_ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
-        let mut transit_verifier = SemanticVerifier::with_capability_ledger(source, transit_ledger);
-        transit_verifier.bind_root_capability("reader", transit, Span::new(0, 0)).unwrap();
-        transit_verifier.capability_ledger_mut().enter_transit(root, transit, 78).unwrap();
-        let transit_report = transit_verifier.verify_program(&ast);
-        assert!(transit_report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2115"));
-    }
-}
+        let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+        let report = verifier.verify_program(&ast);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2112"));
+    }}
