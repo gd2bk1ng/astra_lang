@@ -19,12 +19,31 @@ pub struct CapabilityParameterSpec<'a> {
     pub declaration_span: Span,
 }
 
+/// Identifies the ownership context in which a planned call will execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityOwnerContext {
+    Host(CapabilityOwnerId),
+    Callable,
+}
+
+/// The source of an authority in a static transfer plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityTransferSource<'a> {
+    HostBinding {
+        instance: CapabilityInstanceId,
+        owner: CapabilityOwnerId,
+    },
+    CallableParameter {
+        name: &'a str,
+        declared_kind: CapabilityId,
+    },
+}
+
 /// A statically resolved transfer item. This is a description, not ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapabilityTransferItem<'a> {
     pub source_name: &'a str,
-    pub instance: CapabilityInstanceId,
-    pub source_owner: CapabilityOwnerId,
+    pub source: CapabilityTransferSource<'a>,
     pub parameter_name: &'a str,
     pub required_kind: CapabilityId,
     pub move_span: Span,
@@ -35,18 +54,50 @@ pub struct CapabilityTransferItem<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityTransferPlan<'a> {
     callee: &'a str,
-    caller_owner: CapabilityOwnerId,
+    caller_context: CapabilityOwnerContext,
     call_span: Span,
     items: Vec<CapabilityTransferItem<'a>>,
 }
 
 impl<'a> CapabilityTransferPlan<'a> {
-    pub const fn callee(&self) -> &'a str { self.callee }
-    pub const fn caller_owner(&self) -> CapabilityOwnerId { self.caller_owner }
-    pub const fn call_span(&self) -> Span { self.call_span }
-    pub fn items(&self) -> &[CapabilityTransferItem<'a>] { &self.items }
+    pub fn from_parts(
+        callee: &'a str,
+        caller_context: CapabilityOwnerContext,
+        call_span: Span,
+        items: Vec<CapabilityTransferItem<'a>>,
+    ) -> Self {
+        Self {
+            callee,
+            caller_context,
+            call_span,
+            items,
+        }
+    }
+
+    pub const fn callee(&self) -> &'a str {
+        self.callee
+    }
+
+    pub const fn caller_context(&self) -> CapabilityOwnerContext {
+        self.caller_context
+    }
+
+    pub const fn call_span(&self) -> Span {
+        self.call_span
+    }
+
+    pub fn items(&self) -> &[CapabilityTransferItem<'a>] {
+        &self.items
+    }
+
     pub fn instances(&self) -> Vec<CapabilityInstanceId> {
-        self.items.iter().map(|item| item.instance).collect()
+        self.items
+            .iter()
+            .filter_map(|item| match item.source {
+                CapabilityTransferSource::HostBinding { instance, .. } => Some(instance),
+                CapabilityTransferSource::CallableParameter { .. } => None,
+            })
+            .collect()
     }
 }
 
@@ -217,8 +268,10 @@ pub fn build_static_transfer_plan<'a>(
 
         items.push(CapabilityTransferItem {
             source_name: target,
-            instance: binding.instance(),
-            source_owner: caller_owner,
+            source: CapabilityTransferSource::HostBinding {
+                instance: binding.instance(),
+                owner: caller_owner,
+            },
             parameter_name: spec.name,
             required_kind: spec.kind,
             move_span,
@@ -227,12 +280,12 @@ pub fn build_static_transfer_plan<'a>(
     }
 
     if errors.is_empty() {
-        Ok(CapabilityTransferPlan {
+        Ok(CapabilityTransferPlan::from_parts(
             callee,
-            caller_owner,
+            CapabilityOwnerContext::Host(caller_owner),
             call_span,
             items,
-        })
+        ))
     } else {
         Err(errors)
     }
@@ -295,7 +348,13 @@ mod tests {
 
         assert_eq!(plan.callee(), "read_document");
         assert_eq!(plan.items().len(), 1);
-        assert_eq!(plan.items()[0].instance, instance);
+        assert_eq!(
+            plan.items()[0].source,
+            CapabilityTransferSource::HostBinding {
+                instance,
+                owner: root,
+            }
+        );
         assert_eq!(verifier.capability_ledger().instance(instance).unwrap().state(), before);
         assert_eq!(verifier.capability_ledger().instance(instance).unwrap().owner(), root);
     }
