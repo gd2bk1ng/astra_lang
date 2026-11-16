@@ -1780,9 +1780,9 @@ impl<'src> SemanticVerifier<'src> {
                     }
                 }
 
-                // Concrete source bindings are resolved against the host ledger.
-                // Symbolic callable parameters are validated above and deliberately
-                // deferred: static body checking cannot manufacture runtime instances.
+                // Concrete host bindings resolve against the ledger. Symbolic
+                // callable parameters remain explicit source references in the
+                // plan; no runtime instance is fabricated during static checking.
                 let concrete_parameters: Vec<_> = indexed_capability_parameters.iter()
                     .copied()
                     .filter(|indexed| !self.in_callable_body && {
