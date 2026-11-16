@@ -1706,8 +1706,9 @@ impl<'src> SemanticVerifier<'src> {
                         is_valid = false;
                         self.error(
                             CODE_CAPABILITY_ARGUMENT_MISSING,
-                            format!("call to '{}' omits required capability parameter '{}' of kind '{}'",
-                                signature.name, parameter.name, required.capability.as_str()),
+                            format!("call to '{}' omits required capability parameter '{}' of kind '{}' (kind declared at {}:{})",
+                                signature.name, parameter.name, required.capability.as_str(),
+                                required.span.line, required.span.column),
                             *span,
                         );
                         continue;
@@ -1717,8 +1718,9 @@ impl<'src> SemanticVerifier<'src> {
                         is_valid = false;
                         self.error(
                             CODE_CAPABILITY_MOVE_REQUIRED,
-                            format!("capability parameter '{}' of kind '{}' requires an explicit move expression",
-                                parameter.name, required.capability.as_str()),
+                            format!("capability parameter '{}' of kind '{}' (kind declared at {}:{}) requires an explicit move expression",
+                                parameter.name, required.capability.as_str(),
+                                required.span.line, required.span.column),
                             expression_span(argument),
                         );
                         continue;
