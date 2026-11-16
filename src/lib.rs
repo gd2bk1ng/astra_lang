@@ -5,6 +5,7 @@
 //! from the compiler, runtime, AI tooling, and Syntra Kernel layers.
 
 pub mod ast;
+pub mod capability_transfer;
 pub mod diagnostics;
 pub mod epistemic;
 pub mod invariants;
@@ -18,6 +19,10 @@ pub mod verify;
 // a second owned token representation.
 
 pub use ast::*;
+pub use capability_transfer::{
+    build_static_transfer_plan, CapabilityPrecommitError, CapabilityTransferItem,
+    CapabilityTransferPlan, CapabilityParameterSpec, IndexedCapabilityParameter,
+};
 pub use epistemic::*;
 pub use invariants::*;
 pub use lexer::{LexError, Lexer};
