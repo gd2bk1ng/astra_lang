@@ -2,9 +2,9 @@ name: SyntraLang CI
 
 on:
   push:
-    branches: ["syntra_lang"]
+    branches: ["syntra_lang", "r79-capability-runtime-recovery"]
   pull_request:
-    branches: ["syntra_lang"]
+    branches: ["syntra_lang", "r79-capability-runtime-recovery"]
 
 env:
   CARGO_TERM_COLOR: always
