@@ -17,10 +17,17 @@ impl RegistryId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InvocationId(u64);
+pub struct InvocationId {
+    registry: RegistryId,
+    sequence: u64,
+}
 
 impl InvocationId {
-    pub const fn value(self) -> u64 { self.0 }
+    /// Return the registry-qualified sequence number.
+    pub const fn value(self) -> u64 { self.sequence }
+
+    /// Return the registry that minted this invocation identity.
+    pub const fn registry_id(self) -> RegistryId { self.registry }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +44,7 @@ pub enum RuntimeError {
     RegistryIdExhausted,
     InvocationIdExhausted,
     UnknownInvocation(InvocationId),
+    ForeignInvocation { expected_registry: RegistryId, actual_registry: RegistryId },
     InvalidTransition { from: InvocationState, to: InvocationState },
     ParentNotExecuting(InvocationId),
     ParentIdNotLessThanChild { parent: InvocationId, child: InvocationId },
@@ -90,7 +98,7 @@ impl RuntimeInvocationRegistry {
         // Preserve the full u64 identity space: None means the maximum ID was
         // already issued and no further invocation can be allocated.
         self.next_invocation_id = value.checked_add(1);
-        Ok(InvocationId(value))
+        Ok(InvocationId { registry: self.id, sequence: value })
     }
 
     fn prepare(
@@ -100,6 +108,12 @@ impl RuntimeInvocationRegistry {
     ) -> Result<InvocationId, RuntimeError> {
         self.validate_structure()?;
         if let Some(parent_id) = parent {
+            if parent_id.registry != self.id {
+                return Err(RuntimeError::ForeignInvocation {
+                    expected_registry: self.id,
+                    actual_registry: parent_id.registry,
+                });
+            }
             let parent_record = self.records.get(&parent_id)
                 .ok_or(RuntimeError::UnknownInvocation(parent_id))?;
             if parent_record.state != InvocationState::Executing {
@@ -129,6 +143,12 @@ impl RuntimeInvocationRegistry {
         to: InvocationState,
     ) -> Result<(), RuntimeError> {
         self.validate_structure()?;
+        if id.registry != self.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.id,
+                actual_registry: id.registry,
+            });
+        }
         let record = self.records.get(&id).ok_or(RuntimeError::UnknownInvocation(id))?;
         let from = record.state;
         let legal = matches!(
@@ -161,7 +181,10 @@ impl RuntimeInvocationRegistry {
     /// staged/replacement-state integration fail closed on malformed ancestry.
     fn validate_structure(&self) -> Result<(), RuntimeError> {
         for (key, record) in &self.records {
-            if *key != record.id {
+            if *key != record.id
+                || key.registry != self.id
+                || record.id.registry != self.id
+            {
                 return Err(RuntimeError::RegistryInvariantViolation);
             }
 
@@ -169,7 +192,10 @@ impl RuntimeInvocationRegistry {
             visited.insert(record.id);
             let mut cursor = record.parent;
             while let Some(parent_id) = cursor {
-                if parent_id >= record.id || !visited.insert(parent_id) {
+                if parent_id.registry != self.id
+                    || parent_id >= record.id
+                    || !visited.insert(parent_id)
+                {
                     return Err(RuntimeError::RegistryInvariantViolation);
                 }
                 let Some(parent) = self.records.get(&parent_id) else {
@@ -298,7 +324,7 @@ mod tests {
         let child = coordinator.prepare_child(root).unwrap();
 
         coordinator.registry.records.get_mut(&child).unwrap().parent =
-            Some(InvocationId(u64::MAX));
+            Some(InvocationId { registry: coordinator.registry.id, sequence: u64::MAX });
 
         assert_eq!(
             coordinator.commit(child),
@@ -338,6 +364,41 @@ mod tests {
             Err(RuntimeError::InvocationIdExhausted)
         );
         assert_eq!(coordinator.invocations().count(), 1);
+    }
+
+    #[test]
+    fn invocation_ids_are_bound_to_the_registry_that_minted_them() {
+        let mut first = RuntimeCoordinator::new().unwrap();
+        let mut second = RuntimeCoordinator::new().unwrap();
+
+        let first_root = first.prepare_root().unwrap();
+        let second_root = second.prepare_root().unwrap();
+
+        // Each registry starts its local sequence at one. The registry
+        // component prevents these otherwise-colliding IDs from aliasing.
+        assert_eq!(first_root.value(), second_root.value());
+        assert_ne!(first_root.registry_id(), second_root.registry_id());
+        assert_ne!(first_root, second_root);
+
+        assert!(matches!(
+            second.commit(first_root),
+            Err(RuntimeError::ForeignInvocation {
+                expected_registry,
+                actual_registry,
+            }) if expected_registry == second.registry_id()
+                && actual_registry == first.registry_id()
+        ));
+        assert!(matches!(
+            second.prepare_child(first_root),
+            Err(RuntimeError::ForeignInvocation { .. })
+        ));
+        assert!(second.invocation(first_root).is_none());
+
+        // A foreign ID must not mutate the receiving registry's own record.
+        assert_eq!(
+            second.invocation(second_root).unwrap().state(),
+            InvocationState::Prepared
+        );
     }
 
     #[test]
