@@ -171,3 +171,17 @@ fn parser_rejects_non_identifier_move_targets() {
         assert!(parser.parse_program().is_err(), "must reject: {source}");
     }
 }
+
+
+#[test]
+fn parser_rejects_malformed_capability_parameter_types() {
+    for source in [
+        "fn invalid(authority: Cap<>) { }",
+        "fn invalid(authority: Cap<ReadFile, WriteFile>) { }",
+        "fn invalid(authority: Cap<Cap<ReadFile>>) { }",
+    ] {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let mut parser = Parser::new(&tokens);
+        assert!(parser.parse_program().is_err(), "must reject: {source}");
+    }
+}

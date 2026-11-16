@@ -1596,7 +1596,7 @@ fn expression_span(expression: &Expression<'_>) -> Span {
         | Expression::Binary { span, .. }
         | Expression::Symbolic { span, .. }
         | Expression::SelfModify { span, .. }
-        | Expression::Move { span, .. } => *span
+        | Expression::Move { span, .. } => *span,
         Expression::Block(block) => block.span,
     }
 }
