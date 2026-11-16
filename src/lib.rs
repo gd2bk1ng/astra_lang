@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod capability_transfer;
+pub mod capability_runtime;
 pub mod diagnostics;
 pub mod epistemic;
 pub mod invariants;
@@ -19,6 +20,7 @@ pub mod verify;
 // a second owned token representation.
 
 pub use ast::*;
+pub use capability_runtime::{CapabilityInstance,CapabilityInstanceId,CapabilityOwnerId,CapabilityState,CapabilityTransferRecord,InvocationId,TransferId,TransferState};
 pub use capability_transfer::{
     build_static_transfer_plan, CapabilityOwnerContext, CapabilityParameterSpec,
     CapabilityPrecommitError, CapabilityTransferItem, CapabilityTransferPlan,
