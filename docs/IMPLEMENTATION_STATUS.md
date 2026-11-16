@@ -56,3 +56,10 @@ Before a stable release, the project still needs:
 ## Verification record for this documentation branch
 
 The documentation update itself has not been compiled or tested by the GitHub file-editing workflow. The corrected CI workflow will run on pushes to `main` and pull requests targeting `main`; the feature branch should be validated through its pull request or a manual workflow run. The maintainer's local Rust rig remains an additional verification environment.
+
+
+## CI observation from documentation PR
+
+GitHub Actions run 198 for PR #5 reached the formatting step and **failed at `cargo fmt --all -- --check`**. The output reports formatting differences across pre-existing Rust source and test files, including `src/ast.rs`, `src/diagnostics.rs`, `src/engine/runtime.rs`, `src/lexer.rs`, `src/parser.rs`, `src/verify.rs`, and multiple integration tests.
+
+Because the format step failed, `cargo check`, `cargo test`, and Clippy were skipped in that run. This is a formatting-gate failure, not evidence of a compilation or test failure; compilation and tests remain unverified by this run. A separate formatting-only cleanup followed by a fresh full CI run is required to establish a green baseline.
