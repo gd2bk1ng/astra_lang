@@ -128,7 +128,7 @@ impl CapabilityLedger{
     (TransferState::Active,CapabilityState::InTransit{transfer_id},Some(active))if transfer_id==*tid&&active==*tid=>{},
     (TransferState::Active,CapabilityState::Consumed{..},None)=>{},
     (TransferState::Consumed,CapabilityState::Consumed{..},None)=>{},
-    (TransferState::Active,CapabilityState::Abandoned{..},None)if abnormal=>{},
+    (TransferState::Active,CapabilityState::Abandoned{..},None)=>{},
     (TransferState::Abandoned,CapabilityState::Abandoned{..},None)if abnormal=>{},
     _=>return Err(CapabilityError::TransferHistoryCorrupt(*tid))
    }
@@ -176,5 +176,5 @@ impl CapabilityLedger{
  #[test]fn rt1_17_three_levels(){let(mut l,r,o,i,a,_)=setup();let m=l.create_owner().unwrap();let b=l.create_invocation(m,Some(a)).unwrap();l.transfer_batch(o,m,b,&[i]).unwrap();let n=l.create_owner().unwrap();let c=l.create_invocation(n,Some(b)).unwrap();l.transfer_batch(m,n,c,&[i]).unwrap();l.reconcile_return(c).unwrap();l.reconcile_return(b).unwrap();l.reconcile_return(a).unwrap();assert_eq!(l.instance(i).unwrap().owner(),r)}
  #[test]fn rt1_18_child_consumed_closes_ancestors(){let(mut l,_,o,i,a,t)=setup();let n=l.create_owner().unwrap();let b=l.create_invocation(n,Some(a)).unwrap();let t2=l.transfer_batch(o,n,b,&[i]).unwrap()[0];l.consume(n,i,b,s()).unwrap();l.reconcile_return(b).unwrap();l.reconcile_return(a).unwrap();assert_eq!(l.transfer(t).unwrap().state(),TransferState::Consumed);assert_eq!(l.transfer(t2).unwrap().state(),TransferState::Consumed)}
  #[test]fn rt1_19_abandoned_descendant_unwinds(){let(mut l,_,o,i,a,t)=setup();let n=l.create_owner().unwrap();let b=l.create_invocation(n,Some(a)).unwrap();let t2=l.transfer_batch(o,n,b,&[i]).unwrap()[0];l.mark_abandoned(b).unwrap();l.mark_abandoned(a).unwrap();assert_eq!(l.transfer(t).unwrap().state(),TransferState::Abandoned);assert_eq!(l.transfer(t2).unwrap().state(),TransferState::Abandoned)}
- #[test]fn rt1_20_empty_inventory(){let mut l=CapabilityLedger::new();let o=l.create_owner().unwrap();let c=l.create_invocation(o,None).unwrap();assert_eq!(l.reconcile_return(c),Ok(()))}
+ #[test]fn rt1_20_empty_inventory_and_transfer_id_exhaustion(){let mut l=CapabilityLedger::new();let o=l.create_owner().unwrap();let c=l.create_invocation(o,None).unwrap();assert_eq!(l.reconcile_return(c),Ok(()));let mut x=CapabilityLedger::new();let r=x.root_owner();let d=x.create_owner().unwrap();let i=x.provision(CapabilityId::ReadFile,r,s()).unwrap();let call=x.create_invocation(d,None).unwrap();x.next_transfer=u64::MAX;assert_eq!(x.transfer_batch(r,d,call,&[i]),Err(CapabilityError::TransferIdExhausted));assert_eq!(x.instance(i).unwrap().state(),CapabilityState::Available)}
 }
