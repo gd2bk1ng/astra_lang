@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod diagnostics;
+pub mod engine;
 pub mod epistemic;
 pub mod invariants;
 pub mod lexer;
@@ -18,6 +19,7 @@ pub mod verify;
 // a second owned token representation.
 
 pub use ast::*;
+pub use engine::identity::{CapabilityId, CapabilityOwnerId};
 pub use epistemic::*;
 pub use invariants::*;
 pub use lexer::{LexError, Lexer};
