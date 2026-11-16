@@ -2,9 +2,9 @@ name: SyntraLang CI
 
 on:
   push:
-    branches: ["syntra_lang"]
+    branches: ["main"]
   pull_request:
-    branches: ["syntra_lang"]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,7 +12,7 @@ env:
 
 jobs:
   verify:
-    name: Check, test, clippy
+    name: Format, check, test, and lint
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: rustfmt, clippy
 
       - name: Format
         run: cargo fmt --all -- --check
