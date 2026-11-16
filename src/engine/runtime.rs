@@ -41,6 +41,7 @@ pub enum RuntimeError {
     ParentNotExecuting(InvocationId),
     ParentIdNotLessThanChild { parent: InvocationId, child: InvocationId },
     NonTerminalDescendant(InvocationId),
+    RegistryInvariantViolation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +98,7 @@ impl RuntimeInvocationRegistry {
         _authority: &CoordinatorPrivilegeToken,
         parent: Option<InvocationId>,
     ) -> Result<InvocationId, RuntimeError> {
+        self.validate_structure()?;
         if let Some(parent_id) = parent {
             let parent_record = self.records.get(&parent_id)
                 .ok_or(RuntimeError::UnknownInvocation(parent_id))?;
@@ -126,6 +128,7 @@ impl RuntimeInvocationRegistry {
         id: InvocationId,
         to: InvocationState,
     ) -> Result<(), RuntimeError> {
+        self.validate_structure()?;
         let record = self.records.get(&id).ok_or(RuntimeError::UnknownInvocation(id))?;
         let from = record.state;
         let legal = matches!(
@@ -149,6 +152,32 @@ impl RuntimeInvocationRegistry {
             return Err(RuntimeError::UnknownInvocation(id));
         };
         record.state = to;
+        Ok(())
+    }
+
+
+    /// Check the registry's complete parent graph before any lifecycle mutation.
+    /// Public APIs maintain these invariants; the full scan also makes future
+    /// staged/replacement-state integration fail closed on malformed ancestry.
+    fn validate_structure(&self) -> Result<(), RuntimeError> {
+        for (key, record) in &self.records {
+            if *key != record.id {
+                return Err(RuntimeError::RegistryInvariantViolation);
+            }
+
+            let mut visited = std::collections::BTreeSet::new();
+            visited.insert(record.id);
+            let mut cursor = record.parent;
+            while let Some(parent_id) = cursor {
+                if parent_id >= record.id || !visited.insert(parent_id) {
+                    return Err(RuntimeError::RegistryInvariantViolation);
+                }
+                let Some(parent) = self.records.get(&parent_id) else {
+                    return Err(RuntimeError::RegistryInvariantViolation);
+                };
+                cursor = parent.parent;
+            }
+        }
         Ok(())
     }
 
@@ -259,6 +288,26 @@ mod tests {
         let child = coordinator.prepare_child(root).unwrap();
         assert!(child.value() > root.value());
         assert_eq!(coordinator.invocation(child).unwrap().parent(), Some(root));
+    }
+
+
+    #[test]
+    fn lifecycle_mutation_rejects_forged_or_missing_ancestry() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+
+        coordinator.registry.records.get_mut(&child).unwrap().parent =
+            Some(InvocationId(u64::MAX));
+
+        assert_eq!(
+            coordinator.commit(child),
+            Err(RuntimeError::RegistryInvariantViolation)
+        );
+        assert_eq!(
+            coordinator.invocation(child).unwrap().state(),
+            InvocationState::Prepared
+        );
     }
 
     #[test]
