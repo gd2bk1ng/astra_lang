@@ -187,6 +187,7 @@ pub enum CapabilityState {
     Available,
     InTransit { call_id: u64 },
     Consumed { call_id: u64, consumed_at: Span },
+    Abandoned { call_id: u64 },
 }
 
 /// Immutable identity and provenance record for one capability instance.
@@ -233,9 +234,18 @@ impl CapabilityInstance {
 pub struct CapabilityLedger {
     instances: BTreeMap<CapabilityInstanceId, CapabilityInstance>,
     owners: BTreeSet<CapabilityOwnerId>,
+    transfers: BTreeMap<CapabilityInstanceId, CapabilityTransferRecord>,
     next_instance_id: u64,
     next_owner_id: u64,
     root_owner: CapabilityOwnerId,
+}
+
+/// Provenance required to reconcile a temporary ownership transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CapabilityTransferRecord {
+    call_id: u64,
+    source_owner: CapabilityOwnerId,
+    destination_owner: CapabilityOwnerId,
 }
 
 impl Default for CapabilityLedger {
@@ -253,6 +263,7 @@ impl CapabilityLedger {
         Self {
             instances: BTreeMap::new(),
             owners,
+            transfers: BTreeMap::new(),
             next_instance_id: 1,
             next_owner_id: 2,
             root_owner,
@@ -367,6 +378,9 @@ impl CapabilityLedger {
 
         match instance.state {
             CapabilityState::Available => Err(CapabilityError::NotInTransit(id)),
+            CapabilityState::InTransit { call_id: active_call } if active_call != call_id => {
+                Err(CapabilityError::CallMismatch { instance: id, expected: active_call, actual: call_id })
+            }
             CapabilityState::InTransit { .. } => {
                 instance.state = CapabilityState::Consumed {
                     call_id,
@@ -375,7 +389,138 @@ impl CapabilityLedger {
                 Ok(())
             }
             CapabilityState::Consumed { .. } => Err(CapabilityError::AlreadyConsumed(id)),
+            CapabilityState::Abandoned { .. } => Err(CapabilityError::Abandoned(id)),
         }
+    }
+
+    /// Atomically transfer a non-empty set of available instances to a callee.
+    /// Validation completes for the entire batch before any instance is mutated.
+    pub fn transfer_batch(
+        &mut self,
+        source_owner: CapabilityOwnerId,
+        destination_owner: CapabilityOwnerId,
+        call_id: u64,
+        instances: &[CapabilityInstanceId],
+    ) -> Result<(), CapabilityError> {
+        if !self.owners.contains(&source_owner) {
+            return Err(CapabilityError::UnknownOwner(source_owner));
+        }
+        if !self.owners.contains(&destination_owner) {
+            return Err(CapabilityError::UnknownOwner(destination_owner));
+        }
+        if source_owner == destination_owner {
+            return Err(CapabilityError::SameOwnerTransfer);
+        }
+
+        let mut unique = BTreeSet::new();
+        for id in instances {
+            if !unique.insert(*id) {
+                return Err(CapabilityError::DuplicateTransfer(*id));
+            }
+            let instance = self.instances.get(id).ok_or(CapabilityError::UnknownInstance(*id))?;
+            if instance.owner != source_owner {
+                return Err(CapabilityError::OwnerMismatch { instance: *id, owner: source_owner });
+            }
+            match instance.state {
+                CapabilityState::Available => {}
+                CapabilityState::InTransit { .. } => return Err(CapabilityError::AlreadyInTransit(*id)),
+                CapabilityState::Consumed { .. } => return Err(CapabilityError::AlreadyConsumed(*id)),
+                CapabilityState::Abandoned { .. } => return Err(CapabilityError::Abandoned(*id)),
+            }
+        }
+
+        for id in instances {
+            let instance = self.instances.get_mut(id).expect("batch was fully validated");
+            instance.owner = destination_owner;
+            instance.state = CapabilityState::InTransit { call_id };
+            self.transfers.insert(*id, CapabilityTransferRecord {
+                call_id,
+                source_owner,
+                destination_owner,
+            });
+        }
+        Ok(())
+    }
+
+    /// Reconcile a normally completed call: unused instances return to their
+    /// original owner; consumed instances remain permanently consumed.
+    pub fn reconcile_return(
+        &mut self,
+        destination_owner: CapabilityOwnerId,
+        call_id: u64,
+        instances: &[CapabilityInstanceId],
+    ) -> Result<(), CapabilityError> {
+        let mut unique = BTreeSet::new();
+        for id in instances {
+            if !unique.insert(*id) {
+                return Err(CapabilityError::DuplicateTransfer(*id));
+            }
+            let instance = self.instances.get(id).ok_or(CapabilityError::UnknownInstance(*id))?;
+            let record = self.transfers.get(id).ok_or(CapabilityError::NotTransferred(*id))?;
+            if record.call_id != call_id {
+                return Err(CapabilityError::CallMismatch { instance: *id, expected: record.call_id, actual: call_id });
+            }
+            if record.destination_owner != destination_owner || instance.owner != destination_owner {
+                return Err(CapabilityError::OwnerMismatch { instance: *id, owner: destination_owner });
+            }
+            match instance.state {
+                CapabilityState::InTransit { call_id: active } if active == call_id => {}
+                CapabilityState::Consumed { call_id: active, .. } if active == call_id => {}
+                CapabilityState::Abandoned { .. } => return Err(CapabilityError::Abandoned(*id)),
+                _ => return Err(CapabilityError::InvalidReconciliation(*id)),
+            }
+        }
+
+        for id in instances {
+            let instance = self.instances.get_mut(id).expect("batch was fully validated");
+            if matches!(instance.state, CapabilityState::InTransit { .. }) {
+                let record = self.transfers.remove(id).expect("validated transfer record exists");
+                instance.owner = record.source_owner;
+                instance.state = CapabilityState::Available;
+            } else {
+                self.transfers.remove(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Terminally abandon unused transferred instances after abnormal completion.
+    /// Consumed instances remain consumed and are never rolled back.
+    pub fn mark_abandoned(
+        &mut self,
+        destination_owner: CapabilityOwnerId,
+        call_id: u64,
+        instances: &[CapabilityInstanceId],
+    ) -> Result<(), CapabilityError> {
+        let mut unique = BTreeSet::new();
+        for id in instances {
+            if !unique.insert(*id) {
+                return Err(CapabilityError::DuplicateTransfer(*id));
+            }
+            let instance = self.instances.get(id).ok_or(CapabilityError::UnknownInstance(*id))?;
+            let record = self.transfers.get(id).ok_or(CapabilityError::NotTransferred(*id))?;
+            if record.call_id != call_id {
+                return Err(CapabilityError::CallMismatch { instance: *id, expected: record.call_id, actual: call_id });
+            }
+            if record.destination_owner != destination_owner || instance.owner != destination_owner {
+                return Err(CapabilityError::OwnerMismatch { instance: *id, owner: destination_owner });
+            }
+            match instance.state {
+                CapabilityState::InTransit { call_id: active } if active == call_id => {}
+                CapabilityState::Consumed { call_id: active, .. } if active == call_id => {}
+                CapabilityState::Abandoned { .. } => return Err(CapabilityError::Abandoned(*id)),
+                _ => return Err(CapabilityError::InvalidReconciliation(*id)),
+            }
+        }
+
+        for id in instances {
+            let instance = self.instances.get_mut(id).expect("batch was fully validated");
+            if matches!(instance.state, CapabilityState::InTransit { .. }) {
+                instance.state = CapabilityState::Abandoned { call_id };
+            }
+            self.transfers.remove(id);
+        }
+        Ok(())
     }
 }
 
@@ -391,6 +536,12 @@ pub enum CapabilityError {
     AlreadyInTransit(CapabilityInstanceId),
     NotInTransit(CapabilityInstanceId),
     AlreadyConsumed(CapabilityInstanceId),
+    Abandoned(CapabilityInstanceId),
+    CallMismatch { instance: CapabilityInstanceId, expected: u64, actual: u64 },
+    DuplicateTransfer(CapabilityInstanceId),
+    SameOwnerTransfer,
+    NotTransferred(CapabilityInstanceId),
+    InvalidReconciliation(CapabilityInstanceId),
 }
 
 /// Result of semantic verification.
