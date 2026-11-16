@@ -1,109 +1,51 @@
 # SyntraLang Lexical Contract Matrix
 
-Status: **Phase 1 — working contract**
+Status: **implemented lexical foundation; contract remains version 0.1 and may evolve**
 
-This matrix reconciles recovered Astra syntax with the current SyntraLang
-lexical contract. It is a design and regression artifact, not a claim that the
-parser or semantic layer is complete.
+This document records the current lexer contract and the decisions made while reconciling earlier Astra experiments with SyntraLang.
 
 ## 1. Token architecture
 
-SyntraLang currently uses a **lexical token space** with source spans and exact
-source lexemes. Parser-level words such as `intent`, `fn`, `rule`,
-`goal`, `governance`, `effects`, and `uncertainty` are intentionally
-represented as identifiers at the lexer boundary.
+The lexer recognizes lexical structure, not cognitive meaning. Words such as `intent`, `fn`, `rule`, `goal`, `effects`, `uncertainty`, and `governance` are emitted as identifiers. The parser assigns grammatical roles.
 
-This is deliberate: the lexer recognizes lexical structure; the parser assigns
-syntactic/semantic roles.
+This keeps the token model small and avoids coupling the lexer to every evolving language concept.
 
-The term **subspace token** is therefore treated here as a future architectural
-concept: a parser/semantic classification layered over the stable lexical token
-space, rather than a second incompatible lexer token universe.
+## 2. Current lexical behavior
 
-## 2. Historical construct matrix
+| Area | Current contract |
+|---|---|
+| Identifiers | Unicode XID start/continue; underscore is accepted at the beginning |
+| Boolean literals | `true`, `false` |
+| Integers | Decimal `i64` values; overflow is rejected |
+| Floats | Decimal finite `f64` values; exponent notation is not specified |
+| Numeric separators | Underscore separators are restricted; malformed placements are rejected |
+| Strings | Double-quoted; raw source content is borrowed; supported escapes are validated but not decoded into an owned string |
+| Comments | `//` line comments and `/* ... */` block comments |
+| Spans | Byte offsets plus line/column coordinates |
+| Unknown characters | Hard lexical errors; input is not silently skipped |
+| EOF | Explicit EOF token |
 
-| Historical Astra construct | Expected lexical sequence | Current Syntra lexical tokens | Mismatch / risk | Final Syntra contract | Regression case |
-|---|---|---|---|---|---|
-| `intent name { ... }` | identifier, identifier, `{`, ... | Identifier("intent"), Identifier(name), LBrace | Historical lexer emitted dedicated Intent token | Keep lexical words as identifiers; parser recognizes declaration role | `intent syntra { }` |
-| `motive "text"` | identifier, string | Identifier("motive"), StringLiteral | Historical lexer emitted Motive token | Parser-owned keyword role | `intent x { motive "reason" }` |
-| `action "text"` | identifier, string | Identifier("action"), StringLiteral | Historical lexer emitted Action token | Parser-owned keyword role | `intent x { action "act" }` |
-| `fn name(...)` | identifier, identifier, `(`, ... | Identifier("fn"), Identifier(name), LParen | Historical parser expected keyword-like identifiers | Stable identifier token contract | `fn main() {}` |
-| `@grad` | `@`, identifier | At, Identifier("grad") | Historical parser/lexer disagreed about annotation representation | Always lex as two tokens; parser combines them | `@grad fn f() {}` |
-| `rule name(...)` | identifier, identifier, LParen | Identifier("rule"), Identifier(name), LParen | None after keyword-light decision | Parser assigns RuleDecl role | `rule r() {}` |
-| effect annotation | `{`, identifier list, `}` | LBrace, Identifier, Comma, RBrace | Braces also serve blocks | Context-sensitive parser interpretation | `fn f() {Pure, IO} {}` |
-| return arrow | `-`, `>` | Arrow | Historical grammar and token APIs diverged | Arrow is a dedicated lexical operator | `fn f() -> Int<64> {}` |
-| fat arrow | `=`, `>` | ArrowFat | Required by match grammar | Dedicated lexical operator | `x => y;` |
-| type constructors | identifiers plus angle brackets | Identifier, LessThan, GreaterThan | No dedicated type keyword tokens | Parser owns type constructor interpretation | `Cap<Int<64>>` |
-| symbolic expression | identifier, parens | Identifier("symbolic"), LParen, ... | Historical parser treats word semantically | Parser-level symbolic construct | `symbolic(x)` |
-| self-modification | identifier, parens | Identifier("modify"), LParen, ... | Governance semantics are not lexical | Parser recognizes syntax; verifier governs legality | `modify(target, patch)` |
-| backtrack | identifier, block | Identifier("backtrack"), LBrace | Historical parser uses keyword-like identifier | Parser-owned statement role | `backtrack {}` |
-| annotation | `::`, identifier, optional args | DoubleColon, Identifier, ... | Legacy parser/lexer versions differed | Stable operator token + parser semantics | `::trace` |
-| boolean literal | `true`/`false` | BoolLiteral | Dedicated literal is appropriate | Keep literal distinction | `true false` |
-| integer | decimal digits | IntLiteral | Historical grammar permitted signs lexically | Sign is unary Minus in Syntra | `-42` |
-| float | decimal digits + dot | FloatLiteral | Ambiguous `1.` must not be silently accepted | Require digits after decimal point | `1.0`, `.5`, reject `1.` |
-| numeric separators | digits with separators | IntLiteral/FloatLiteral | Legacy grammar did not define separator placement | Separator only between digits | reject `1__2`, `1_.2`, `1._2` |
-| string | quoted source | StringLiteral with raw lexeme | Legacy lexer lacked strict escape/error handling | Decode supported escapes; preserve raw lexeme | `"a\\n"`, reject invalid escape |
-| unknown character | any unsupported source char | LexError | Legacy lexer silently skipped unknown input | Unknown input is a hard lexical error | reject `$` |
-| Unicode identifier | XID identifier | Identifier | Legacy lexer used broad alphabetic checks | Unicode XID_Start/XID_Continue | `東京`, combining-mark case |
+Examples:
+- Valid: `42`, `1_000`, `1.0`, `.5`, `"hello\nworld"`, `東京`.
+- Invalid: `1.`, `1__2`, `1_.2`, `1._2`, unterminated strings/comments, unsupported escapes, and unsupported characters.
 
-## 3. Cognitive keyword policy
+## 3. Source ownership
 
-The following words are reserved **semantic vocabulary**, not lexer keywords at
-this stage:
+`Token<'src>` retains source lexemes as borrowed slices. Numeric tokens additionally carry parsed scalar values. `Lexer::tokenize()` returns a `Vec<Token<'src>>`, so the token contents are zero-copy but the token collection allocates.
 
-- `intent`
-- `goal`
-- `knowledge`
-- `context`
-- `relationship`
-- `rule`
-- `capability`
-- `effect`
-- `uncertainty`
-- `memory`
-- `observation`
-- `action`
-- `reflection`
-- `verification`
-- `governance`
-- `learning`
-- `approval`
+This is **not** a zero-allocation lexer, zero-allocation parser, or `no_std` implementation.
 
-The parser will establish where these words have special grammatical meaning.
-This keeps lexical compatibility stable and allows the semantic vocabulary to
-grow without continually expanding the low-level token enum.
+## 4. Historical reconciliation
 
-## 4. Zero-copy and no_std status
+Earlier Astra prototypes used dedicated keyword-like token variants and broader or inconsistent numeric/string rules. SyntraLang keeps lexical words as identifiers and places keyword recognition in the parser. Resolved mismatches should have regression tests at the lexical boundary.
 
-The current lexical implementation now uses source-borrowing tokens over `&'a str`.
-`Token<'a>` retains the exact source lexeme without owning a `String`, and
-identifier/string token payloads borrow directly from the input buffer.
-Numeric values remain scalar values while their source spelling remains
-borrowed through the token lexeme.
+## 5. Regression policy
 
-`Vec<Token<'a>>` is still heap-backed, so this is **zero-copy token contents**,
-not yet a zero-allocation lexer pipeline. The current crate also remains `std`.
-A future `&'a [u8]`/`no_std` core is an optimization and portability boundary to
-be evaluated after parser and allocation contracts are proven.
+Every lexical contract change should include:
+1. valid-input fixtures;
+2. malformed-input fixtures;
+3. exact source-span assertions where relevant;
+4. parser conformance tests when syntax is affected;
+5. semantic tests when meaning is affected.
 
-## 5. SIMD and affine capability status
-
-SIMD acceleration is not currently required for correctness and should not
-dictate the public lexer contract. A future optimized backend may use SIMD
-scanning while preserving identical token boundaries and diagnostics.
-
-Affine/linear capability enforcement is a semantic/type-system concern. The
-lexer should preserve capability-related syntax faithfully; it should not claim
-to enforce resource consumption rules that require semantic information.
-
-## 6. Regression policy
-
-Every row representing a resolved historical mismatch should eventually have:
-
-1. a positive lexical fixture where applicable;
-2. a malformed-input fixture where applicable;
-3. a parser conformance test once the parser exists;
-4. a semantic verification test when the construct acquires meaning.
-
-A lexer regression must fail at the lexical boundary rather than being silently
-reinterpreted downstream.
+The implementation and tests are authoritative. This matrix should be updated in the same change as any contract change.
