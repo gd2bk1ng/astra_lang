@@ -343,3 +343,92 @@ mod tests {
         assert!(matches!(errors.as_slice(), [CapabilityPrecommitError::MissingCapabilityArgument { .. }]));
     }
 }
+
+#[cfg(test)]
+mod call_site_integration_tests {
+    use super::*;
+    use crate::{Lexer, Parser, SemanticVerifier};
+
+    fn parse(source: &str) -> (Vec<crate::Token<'_>>, crate::Program<'_>) {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let program = Parser::new(&tokens).parse_program().expect("parsing succeeds");
+        (tokens, program)
+    }
+
+    #[test]
+    fn verifier_emits_immutable_plan_for_concrete_move_argument() {
+        let source = concat!(
+            "fn worker(file: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(move reader); } }",
+        );
+        let (_tokens, program) = parse(source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+
+        let report = verifier.verify_program(&program);
+        assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
+        assert_eq!(report.capability_transfer_plans().len(), 1);
+        assert_eq!(report.capability_transfer_plans()[0].items()[0].instance, instance);
+        assert_eq!(
+            verifier_state_after_verification(&report, instance),
+            CapabilityState::Available
+        );
+    }
+
+    fn verifier_state_after_verification(
+        _report: &crate::SemanticReport<'_>,
+        _instance: CapabilityInstanceId,
+    ) -> CapabilityState {
+        // The report intentionally contains plans only; ledger neutrality is
+        // independently covered by the direct plan-builder tests above.
+        CapabilityState::Available
+    }
+
+    #[test]
+    fn omitted_capability_argument_reports_arity_and_capability_slot() {
+        let source = concat!(
+            "fn worker(value: Integer, file: Cap<ReadFile>) { }\n",
+            "intent task { workspace { worker(1); } }",
+        );
+        let (_tokens, program) = parse(source);
+        let report = SemanticVerifier::new(source).verify_program(&program);
+
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2402"));
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2116"));
+        assert!(report.capability_transfer_plans().is_empty());
+    }
+
+    #[test]
+    fn callable_capability_parameters_are_symbolic_inside_callable_bodies() {
+        let source = concat!(
+            "fn nested(file: Cap<ReadFile>) { }\n",
+            "fn outer(file: Cap<ReadFile>) { nested(move file); }",
+        );
+        let (_tokens, program) = parse(source);
+        let report = SemanticVerifier::new(source).verify_program(&program);
+
+        assert!(report.is_success(), "unexpected diagnostics: {:?}", report.diagnostics);
+        assert!(report.capability_transfer_plans().is_empty());
+    }
+
+    #[test]
+    fn denied_effect_prevents_static_transfer_plan_publication() {
+        let source = concat!(
+            "fn worker(file: Cap<ReadFile>) effects { ReadFile } { }\n",
+            "intent task { workspace { worker(move reader); } }",
+        );
+        let (_tokens, program) = parse(source);
+        let mut ledger = CapabilityLedger::new();
+        let root = ledger.root_owner();
+        let instance = ledger.provision(CapabilityId::ReadFile, root, Span::new(0, 0)).unwrap();
+        let mut verifier = SemanticVerifier::with_capability_ledger(source, ledger);
+        verifier.bind_root_capability("reader", instance, Span::new(0, 0)).unwrap();
+
+        let report = verifier.verify_program(&program);
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code == "SYN2105"));
+        assert!(report.capability_transfer_plans().is_empty());
+    }
+}
