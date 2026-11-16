@@ -353,6 +353,7 @@ impl CapabilityLedger {
             }
             CapabilityState::InTransit { .. } => Err(CapabilityError::AlreadyInTransit(id)),
             CapabilityState::Consumed { .. } => Err(CapabilityError::AlreadyConsumed(id)),
+            CapabilityState::Abandoned { .. } => Err(CapabilityError::Abandoned(id)),
         }
     }
 
