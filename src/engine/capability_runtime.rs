@@ -409,8 +409,25 @@ impl CapabilityLedger {
             });
         }
 
-        if instance.state != CapabilityInstanceState::Available {
-            return Err(CapabilityRuntimeError::CapabilityNotAvailable(capability));
+        let active_transfer = match instance.state {
+            CapabilityInstanceState::Available => None,
+            CapabilityInstanceState::InTransit { transfer } => Some(transfer),
+            CapabilityInstanceState::Consumed => {
+                return Err(CapabilityRuntimeError::CapabilityNotAvailable(capability))
+            }
+        };
+
+        if let Some(transfer) = active_transfer {
+            let transfer_record = self
+                .transfers
+                .get(&transfer)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+            if transfer_record.state != CapabilityTransferState::Active
+                || transfer_record.destination_invocation != invocation
+                || transfer_record.destination_owner != owner
+            {
+                return Err(CapabilityRuntimeError::CapabilityNotAvailable(capability));
+            }
         }
 
         let next_version = self.next_version()?;
@@ -419,6 +436,15 @@ impl CapabilityLedger {
             .get_mut(&capability)
             .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
         instance.state = CapabilityInstanceState::Consumed;
+
+        if let Some(transfer) = active_transfer {
+            let transfer_record = self
+                .transfers
+                .get_mut(&transfer)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+            transfer_record.state = CapabilityTransferState::Consumed;
+        }
+
         self.version = next_version;
 
         self.validate_structure()?;
