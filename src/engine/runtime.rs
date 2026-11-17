@@ -283,11 +283,26 @@ impl RuntimeCoordinator {
     pub const fn registry_id(&self) -> RegistryId { self.registry.id }
 
     pub fn prepare_root(&mut self) -> Result<InvocationId, RuntimeError> {
+        self.registry.validate_structure()?;
+        if self.registry.next_invocation_id.is_none() {
+            return Err(RuntimeError::InvocationIdExhausted);
+        }
+        if self.registry.version.checked_add(1).is_none() {
+            return Err(RuntimeError::RegistryVersionExhausted);
+        }
+
         let owner = CapabilityOwnerId::mint().ok_or(RuntimeError::OwnerIdExhausted)?;
         self.registry.prepare(&self.authority, None, owner)
     }
 
     pub fn prepare_child(&mut self, parent: InvocationId) -> Result<InvocationId, RuntimeError> {
+        if parent.registry != self.registry.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.registry.id,
+                actual_registry: parent.registry,
+            });
+        }
+
         let owner = self
             .registry
             .records
