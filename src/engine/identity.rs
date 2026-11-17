@@ -52,6 +52,11 @@ impl CapabilityOwnerId {
             .map(Self)
     }
 
+    #[cfg(test)]
+    pub(crate) const fn new_for_test(value: u64) -> Self {
+        Self(value)
+    }
+
     /// Return the stable numeric representation without exposing construction.
     pub const fn value(self) -> u64 {
         self.0
