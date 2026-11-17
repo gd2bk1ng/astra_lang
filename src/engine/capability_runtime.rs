@@ -472,7 +472,7 @@ impl CapabilityLedger {
             .instances
             .get_mut(&record.capability)
             .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
-        if instance.state != CapabilityInstanceState::InTransit { transfer: transfer } {
+        if instance.state != (CapabilityInstanceState::InTransit { transfer }) {
             return Err(CapabilityRuntimeError::RegistryInvariantViolation);
         }
         instance.owner = record.source_owner;
