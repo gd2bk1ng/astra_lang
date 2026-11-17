@@ -23,6 +23,14 @@ pub struct InvocationId {
 }
 
 impl InvocationId {
+    #[cfg(test)]
+    pub(crate) const fn new_for_test(sequence: u64) -> Self {
+        Self {
+            registry: RegistryId(0),
+            sequence,
+        }
+    }
+
     /// Return the registry-qualified sequence number.
     pub const fn value(self) -> u64 { self.sequence }
 
