@@ -5,6 +5,12 @@
 //! holds the unforgeable coordinator privilege token.
 
 use std::collections::BTreeMap;
+
+use super::capability_runtime::{
+    CapabilityInstanceId, CapabilityLedger, CapabilityRuntimeError, CapabilityTransferRequest,
+    CapabilityTransferRecord, CapabilityReturn,
+};
+use super::identity::CapabilityOwnerId;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
@@ -52,6 +58,7 @@ pub enum RuntimeError {
     RegistryIdExhausted,
     InvocationIdExhausted,
     RegistryVersionExhausted,
+    OwnerIdExhausted,
     UnknownInvocation(InvocationId),
     ForeignInvocation { expected_registry: RegistryId, actual_registry: RegistryId },
     InvalidTransition { from: InvocationState, to: InvocationState },
@@ -65,12 +72,14 @@ pub enum RuntimeError {
 pub struct RuntimeInvocationRecord {
     id: InvocationId,
     parent: Option<InvocationId>,
+    owner: CapabilityOwnerId,
     state: InvocationState,
 }
 
 impl RuntimeInvocationRecord {
     pub const fn id(&self) -> InvocationId { self.id }
     pub const fn parent(&self) -> Option<InvocationId> { self.parent }
+    pub const fn owner(&self) -> CapabilityOwnerId { self.owner }
     pub const fn state(&self) -> InvocationState { self.state }
 }
 
@@ -116,6 +125,7 @@ impl RuntimeInvocationRegistry {
         &mut self,
         _authority: &CoordinatorPrivilegeToken,
         parent: Option<InvocationId>,
+        owner: CapabilityOwnerId,
     ) -> Result<InvocationId, RuntimeError> {
         self.validate_structure()?;
         let next_version = self.version.checked_add(1)
@@ -144,6 +154,7 @@ impl RuntimeInvocationRegistry {
         self.records.insert(id, RuntimeInvocationRecord {
             id,
             parent,
+            owner,
             state: InvocationState::Prepared,
         });
         self.version = next_version;
@@ -257,6 +268,7 @@ impl RuntimeInvocationRegistry {
 pub struct RuntimeCoordinator {
     registry: RuntimeInvocationRegistry,
     authority: CoordinatorPrivilegeToken,
+    capability_ledger: CapabilityLedger,
 }
 
 impl RuntimeCoordinator {
@@ -264,17 +276,25 @@ impl RuntimeCoordinator {
         Ok(Self {
             registry: RuntimeInvocationRegistry::new()?,
             authority: CoordinatorPrivilegeToken::new(),
+            capability_ledger: CapabilityLedger::new(),
         })
     }
 
     pub const fn registry_id(&self) -> RegistryId { self.registry.id }
 
     pub fn prepare_root(&mut self) -> Result<InvocationId, RuntimeError> {
-        self.registry.prepare(&self.authority, None)
+        let owner = CapabilityOwnerId::mint().ok_or(RuntimeError::OwnerIdExhausted)?;
+        self.registry.prepare(&self.authority, None, owner)
     }
 
     pub fn prepare_child(&mut self, parent: InvocationId) -> Result<InvocationId, RuntimeError> {
-        self.registry.prepare(&self.authority, Some(parent))
+        let owner = self
+            .registry
+            .records
+            .get(&parent)
+            .ok_or(RuntimeError::UnknownInvocation(parent))?
+            .owner;
+        self.registry.prepare(&self.authority, Some(parent), owner)
     }
 
     pub fn commit(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
@@ -295,6 +315,86 @@ impl RuntimeCoordinator {
 
     pub fn invocation(&self, id: InvocationId) -> Option<&RuntimeInvocationRecord> {
         self.registry.records.get(&id)
+    }
+
+    pub fn capability_instance(
+        &self,
+        id: CapabilityInstanceId,
+    ) -> Option<&super::capability_runtime::CapabilityInstanceRecord> {
+        self.capability_ledger.instance(id)
+    }
+
+    pub fn capability_transfer(
+        &self,
+        id: super::capability_runtime::TransferId,
+    ) -> Option<&CapabilityTransferRecord> {
+        self.capability_ledger.transfer(id)
+    }
+
+    pub fn capability_ledger_version(&self) -> u64 {
+        self.capability_ledger.version()
+    }
+
+    pub fn grant_capability(
+        &mut self,
+        invocation: InvocationId,
+        kind: super::identity::CapabilityId,
+    ) -> Result<CapabilityInstanceId, CapabilityRuntimeError> {
+        let owner = self
+            .registry
+            .records
+            .get(&invocation)
+            .filter(|record| record.state == InvocationState::Executing)
+            .map(|record| record.owner)
+            .ok_or(CapabilityRuntimeError::InvalidInvocationState(invocation))?;
+        self.capability_ledger.grant(owner, kind)
+    }
+
+    pub fn transfer_batch(
+        &mut self,
+        source: InvocationId,
+        requests: &[CapabilityTransferRequest],
+    ) -> Result<Vec<super::capability_runtime::TransferId>, CapabilityRuntimeError> {
+        let snapshot = self
+            .registry
+            .records
+            .iter()
+            .map(|(&id, record)| (id, (record.owner, record.state)))
+            .collect::<BTreeMap<_, _>>();
+
+        self.capability_ledger
+            .transfer_batch(source, requests, |id| snapshot.get(&id).copied())
+    }
+
+    pub fn consume_capability(
+        &mut self,
+        invocation: InvocationId,
+        capability: CapabilityInstanceId,
+    ) -> Result<(), CapabilityRuntimeError> {
+        let snapshot = self
+            .registry
+            .records
+            .iter()
+            .map(|(&id, record)| (id, record.owner))
+            .collect::<BTreeMap<_, _>>();
+
+        self.capability_ledger
+            .consume(invocation, capability, |id| snapshot.get(&id).copied())
+    }
+
+    pub fn return_capability_transfer(
+        &mut self,
+        transfer: super::capability_runtime::TransferId,
+    ) -> Result<CapabilityReturn, CapabilityRuntimeError> {
+        let snapshot = self
+            .registry
+            .records
+            .iter()
+            .map(|(&id, record)| (id, record.state))
+            .collect::<BTreeMap<_, _>>();
+
+        self.capability_ledger
+            .return_transfer(transfer, |id| snapshot.get(&id).copied())
     }
 
     pub fn invocations(&self) -> impl Iterator<Item = &RuntimeInvocationRecord> {
