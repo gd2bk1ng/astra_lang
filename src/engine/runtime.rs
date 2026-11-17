@@ -593,6 +593,56 @@ mod tests {
     }
 
     #[test]
+    fn invocation_owners_are_engine_minted_and_child_inherits_parent_authority() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+
+        assert_ne!(coordinator.invocation(root).unwrap().owner(),
+                   CapabilityOwnerId::new_for_test(0));
+        assert_eq!(
+            coordinator.invocation(child).unwrap().owner(),
+            coordinator.invocation(root).unwrap().owner()
+        );
+    }
+
+    #[test]
+    fn coordinator_controls_atomic_capability_transfer_and_consumption() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+
+        let capability = coordinator
+            .grant_capability(root, super::super::identity::CapabilityId::ReadFile)
+            .unwrap();
+
+        let transfer = coordinator
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+            )
+            .unwrap();
+
+        assert_eq!(transfer.len(), 1);
+        assert!(matches!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::InTransit { .. }
+        ));
+
+        coordinator.consume_capability(child, capability).unwrap();
+        assert_eq!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::Consumed
+        );
+        assert_eq!(
+            coordinator.consume_capability(child, capability),
+            Err(CapabilityRuntimeError::CapabilityNotAvailable(capability))
+        );
+    }
+
+    #[test]
     fn abandoned_invocation_is_terminal_and_irreversible() {
         let mut coordinator = RuntimeCoordinator::new().unwrap();
         let root = executing_root(&mut coordinator);
