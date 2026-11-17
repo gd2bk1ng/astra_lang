@@ -552,10 +552,9 @@ impl CapabilityLedger {
                     if !seen_return_sequences.insert(sequence) {
                         return Err(CapabilityRuntimeError::DuplicateReturnSequence(sequence));
                     }
-                    if max_return_sequence.is_some_and(|max| sequence <= max) {
-                        return Err(CapabilityRuntimeError::NonMonotonicReturnSequence);
-                    }
-                    max_return_sequence = Some(sequence);
+                    max_return_sequence = Some(
+                        max_return_sequence.map_or(sequence, |max| max.max(sequence)),
+                    );
                 }
                 CapabilityTransferState::Consumed => {
                     if transfer.returned_at.is_some() {
