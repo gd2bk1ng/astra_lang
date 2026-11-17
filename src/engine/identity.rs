@@ -34,8 +34,22 @@ impl CapabilityId {
 pub struct CapabilityOwnerId(u64);
 
 impl CapabilityOwnerId {
-    pub(crate) const fn new(value: u64) -> Self {
-        Self(value)
+    /// Mint an authority identity inside the engine's trusted bootstrap path.
+    ///
+    /// This constructor is intentionally restricted to the engine module tree;
+    /// callers outside the engine cannot manufacture an owner from an integer.
+    pub(super) fn mint() -> Option<Self> {
+        static NEXT_OWNER_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+
+        NEXT_OWNER_ID
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |next| next.checked_add(1),
+            )
+            .ok()
+            .map(Self)
     }
 
     /// Return the stable numeric representation without exposing construction.
