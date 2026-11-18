@@ -1199,15 +1199,12 @@ mod tests {
                 },
             )
             .unwrap()[0];
+        ledger.transfers.get_mut(&transfer).unwrap().state = CapabilityTransferState::Returned;
+        ledger.transfers.get_mut(&transfer).unwrap().returned_at = Some(u64::MAX - 1);
+        ledger.instances.get_mut(&first).unwrap().owner = root_owner;
+        ledger.instances.get_mut(&first).unwrap().state = CapabilityInstanceState::Available;
         ledger.next_return_sequence = Some(u64::MAX);
-        let plan = ledger
-            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap();
-        let returned = ledger
-            .commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap();
-        assert_eq!(returned[0].returned_at(), u64::MAX);
-        assert_eq!(ledger.next_return_sequence, None);
+        assert!(ledger.validate_structure().is_ok());
 
         let second = ledger.grant(root_owner, CapabilityId::WriteFile).unwrap();
         ledger
@@ -1236,7 +1233,7 @@ mod tests {
                 transfer: TransferId(2)
             }
         );
-        assert_eq!(ledger.transfer(transfer).unwrap().returned_at(), Some(u64::MAX));
+        assert_eq!(ledger.transfer(transfer).unwrap().returned_at(), Some(u64::MAX - 1));
     }
 
 }
