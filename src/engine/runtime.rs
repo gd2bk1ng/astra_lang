@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use super::capability_runtime::{
     CapabilityInstanceId, CapabilityLedger, CapabilityRuntimeError, CapabilityTransferRequest,
-    CapabilityTransferRecord, CapabilityReturn,
+    CapabilityTerminationPlan, CapabilityTransferRecord, CapabilityReturn,
 };
 use super::identity::CapabilityOwnerId;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,6 +66,8 @@ pub enum RuntimeError {
     ParentIdNotLessThanChild { parent: InvocationId, child: InvocationId },
     NonTerminalDescendant(InvocationId),
     RegistryInvariantViolation,
+    Capability(CapabilityRuntimeError),
+    StaleTerminationPlan { expected_registry_version: u64, actual_registry_version: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +265,13 @@ impl RuntimeInvocationRegistry {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimeTerminationPlan {
+    registry_version: u64,
+    invocation: InvocationId,
+    capability: CapabilityTerminationPlan,
+}
+
 /// Sole public authority for creating invocations and advancing their lifecycle.
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
@@ -320,8 +329,114 @@ impl RuntimeCoordinator {
         self.registry.transition(&self.authority, id, InvocationState::Executing)
     }
 
+    pub fn prepare_termination(&self, id: InvocationId) -> Result<RuntimeTerminationPlan, RuntimeError> {
+        self.registry.validate_structure()?;
+        if id.registry != self.registry.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.registry.id,
+                actual_registry: id.registry,
+            });
+        }
+
+        let record = self
+            .registry
+            .records
+            .get(&id)
+            .ok_or(RuntimeError::UnknownInvocation(id))?;
+        if record.state != InvocationState::Executing {
+            return Err(RuntimeError::InvalidTransition {
+                from: record.state,
+                to: InvocationState::Returned,
+            });
+        }
+        if let Some(descendant) = self.registry.first_nonterminal_descendant(id) {
+            return Err(RuntimeError::NonTerminalDescendant(descendant));
+        }
+
+        let next_registry_version = self
+            .registry
+            .version
+            .checked_add(1)
+            .ok_or(RuntimeError::RegistryVersionExhausted)?;
+        let snapshot = self
+            .registry
+            .records
+            .iter()
+            .map(|(&invocation, record)| (invocation, record.state))
+            .collect::<BTreeMap<_, _>>();
+        let capability = self
+            .capability_ledger
+            .plan_termination(id, |invocation| snapshot.get(&invocation).copied())
+            .map_err(RuntimeError::Capability)?;
+
+        Ok(RuntimeTerminationPlan {
+            registry_version: next_registry_version - 1,
+            invocation: id,
+            capability,
+        })
+    }
+
+    pub fn commit_termination(&mut self, plan: &RuntimeTerminationPlan) -> Result<(), RuntimeError> {
+        self.registry.validate_structure()?;
+        if plan.invocation.registry != self.registry.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.registry.id,
+                actual_registry: plan.invocation.registry,
+            });
+        }
+        if self.registry.version != plan.registry_version {
+            return Err(RuntimeError::StaleTerminationPlan {
+                expected_registry_version: plan.registry_version,
+                actual_registry_version: self.registry.version,
+            });
+        }
+
+        let record = self
+            .registry
+            .records
+            .get(&plan.invocation)
+            .ok_or(RuntimeError::UnknownInvocation(plan.invocation))?;
+        if record.state != InvocationState::Executing {
+            return Err(RuntimeError::InvalidTransition {
+                from: record.state,
+                to: InvocationState::Returned,
+            });
+        }
+        if let Some(descendant) = self.registry.first_nonterminal_descendant(plan.invocation) {
+            return Err(RuntimeError::NonTerminalDescendant(descendant));
+        }
+        let next_registry_version = self
+            .registry
+            .version
+            .checked_add(1)
+            .ok_or(RuntimeError::RegistryVersionExhausted)?;
+
+        let snapshot = self
+            .registry
+            .records
+            .iter()
+            .map(|(&invocation, record)| (invocation, record.state))
+            .collect::<BTreeMap<_, _>>();
+        self.capability_ledger
+            .commit_termination(&plan.capability, |invocation| {
+                snapshot.get(&invocation).copied()
+            })
+            .map_err(RuntimeError::Capability)?;
+
+        let record = self
+            .registry
+            .records
+            .get_mut(&plan.invocation)
+            .ok_or(RuntimeError::UnknownInvocation(plan.invocation))?;
+        record.state = InvocationState::Returned;
+        self.registry.version = next_registry_version;
+        debug_assert!(self.registry.validate_structure().is_ok());
+        Ok(())
+    }
+
     pub fn return_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
-        self.registry.transition(&self.authority, id, InvocationState::Returned)
+        let plan = self.prepare_termination(id)?;
+        self.commit_termination(&plan)
     }
 
     pub fn abandon_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
