@@ -690,29 +690,6 @@ impl CapabilityLedger {
         Ok(staged_returns)
     }
 
-    /// Return one transfer through the same staged termination machinery.
-    /// This compatibility boundary terminates the transfer's destination
-    /// invocation and therefore may reconcile additional incoming transfers.
-    pub(crate) fn return_transfer<F>(
-        &mut self,
-        transfer: TransferId,
-        resolve_invocation: F,
-    ) -> Result<CapabilityReturn, CapabilityRuntimeError>
-    where
-        F: Fn(InvocationId) -> Option<InvocationState> + Copy,
-    {
-        let record = self
-            .transfers
-            .get(&transfer)
-            .ok_or(CapabilityRuntimeError::UnknownTransfer(transfer))?;
-        let plan = self.plan_termination(record.destination_invocation, resolve_invocation)?;
-        let returns = self.commit_termination(&plan, resolve_invocation)?;
-        returns
-            .into_iter()
-            .find(|item| item.transfer == transfer)
-            .ok_or(CapabilityRuntimeError::InvalidTerminationTransfer(transfer))
-    }
-
     /// Validate all internal ownership, transfer, ancestry, and sequence invariants.
     pub(crate) fn validate_structure(&self) -> Result<(), CapabilityRuntimeError> {
         let mut seen_return_sequences = BTreeSet::new();
