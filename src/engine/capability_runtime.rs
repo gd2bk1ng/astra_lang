@@ -338,7 +338,7 @@ impl CapabilityLedger {
                 });
             }
 
-            if instance.state != CapabilityInstanceState::Available {
+            if matches!(instance.state, CapabilityInstanceState::Consumed) {
                 return Err(CapabilityRuntimeError::CapabilityNotAvailable(
                     request.capability,
                 ));
@@ -506,77 +506,224 @@ impl CapabilityLedger {
         Ok(())
     }
 
-    /// Return an active transfer after its destination invocation terminates.
+    /// Stage termination of one executing invocation.
     ///
-    /// The returned_at sequence is allocated only after all structural checks
-    /// pass, so sequence exhaustion cannot partially mutate the ledger.
+    /// The plan captures the ledger version and the exact active incoming
+    /// transfer set. No return sequence is allocated during planning. A plan
+    /// therefore becomes stale as soon as any other ledger mutation occurs.
+    pub(crate) fn plan_termination<F>(
+        &self,
+        invocation: InvocationId,
+        resolve_invocation: F,
+    ) -> Result<CapabilityTerminationPlan, CapabilityRuntimeError>
+    where
+        F: Fn(InvocationId) -> Option<InvocationState>,
+    {
+        self.validate_structure()?;
+
+        let state = resolve_invocation(invocation)
+            .ok_or(CapabilityRuntimeError::InvalidInvocationState(invocation))?;
+        if state != InvocationState::Executing {
+            return Err(CapabilityRuntimeError::InvalidInvocationState(invocation));
+        }
+
+        let transfers = self
+            .transfers
+            .values()
+            .filter(|record| {
+                record.destination_invocation == invocation
+                    && record.state == CapabilityTransferState::Active
+            })
+            .map(|record| record.id)
+            .collect();
+
+        Ok(CapabilityTerminationPlan {
+            expected_version: self.version,
+            invocation,
+            transfers,
+        })
+    }
+
+    /// Commit a previously staged termination.
+    ///
+    /// Every failure is detected before the first mutation. Return sequence
+    /// numbers are allocated privately here, in transfer-ID order, and only
+    /// for transfers whose capability remains in transit. Consumed capabilities
+    /// close their active transfer without receiving a return sequence.
+    pub(crate) fn commit_termination<F>(
+        &mut self,
+        plan: &CapabilityTerminationPlan,
+        resolve_invocation: F,
+    ) -> Result<Vec<CapabilityReturn>, CapabilityRuntimeError>
+    where
+        F: Fn(InvocationId) -> Option<InvocationState>,
+    {
+        self.validate_structure()?;
+
+        if self.version != plan.expected_version {
+            return Err(CapabilityRuntimeError::StaleTerminationPlan {
+                expected_version: plan.expected_version,
+                actual_version: self.version,
+            });
+        }
+
+        let state = resolve_invocation(plan.invocation)
+            .ok_or(CapabilityRuntimeError::InvalidInvocationState(plan.invocation))?;
+        if state != InvocationState::Executing {
+            return Err(CapabilityRuntimeError::InvalidInvocationState(plan.invocation));
+        }
+
+        let next_version = self.next_version()?;
+        let mut next_return_sequence = self.next_return_sequence;
+        let mut staged_returns = Vec::new();
+
+        for transfer_id in &plan.transfers {
+            let record = self
+                .transfers
+                .get(transfer_id)
+                .ok_or(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id))?;
+            if record.state != CapabilityTransferState::Active
+                || record.destination_invocation != plan.invocation
+            {
+                return Err(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id));
+            }
+
+            let instance = self
+                .instances
+                .get(&record.capability)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+
+            match instance.state {
+                CapabilityInstanceState::InTransit { transfer } if transfer == *transfer_id => {
+                    if let Some(parent_transfer) = record.parent_transfer {
+                        let parent = self
+                            .transfers
+                            .get(&parent_transfer)
+                            .ok_or(CapabilityRuntimeError::InvalidTerminationAncestry(
+                                *transfer_id,
+                            ))?;
+                        if parent.state != CapabilityTransferState::Active
+                            || parent.destination_invocation != record.source_invocation
+                            || parent.capability != record.capability
+                            || parent.destination_owner != record.source_owner
+                        {
+                            return Err(CapabilityRuntimeError::InvalidTerminationAncestry(
+                                *transfer_id,
+                            ));
+                        }
+                    }
+
+                    let sequence = next_return_sequence
+                        .ok_or(CapabilityRuntimeError::ReturnSequenceExhausted)?;
+                    next_return_sequence = sequence
+                        .checked_add(1)
+                        .ok_or(CapabilityRuntimeError::ReturnSequenceOverflow)?;
+                    staged_returns.push(CapabilityReturn {
+                        transfer: *transfer_id,
+                        returned_at: sequence,
+                    });
+                }
+                CapabilityInstanceState::Consumed => {}
+                _ => {
+                    return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                }
+            }
+        }
+
+        for staged in &staged_returns {
+            let record = self
+                .transfers
+                .get(&staged.transfer)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+            if let Some(parent_transfer) = record.parent_transfer {
+                if let Some(parent) = self.transfers.get(&parent_transfer) {
+                    if parent.state == CapabilityTransferState::Returned {
+                        let parent_sequence = parent
+                            .returned_at
+                            .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+                        if staged.returned_at >= parent_sequence {
+                            return Err(CapabilityRuntimeError::ChildReturnedAfterParent);
+                        }
+                    } else if parent.state != CapabilityTransferState::Active {
+                        return Err(CapabilityRuntimeError::InvalidTerminationAncestry(
+                            staged.transfer,
+                        ));
+                    }
+                } else {
+                    return Err(CapabilityRuntimeError::InvalidTerminationAncestry(
+                        staged.transfer,
+                    ));
+                }
+            }
+        }
+
+        for transfer_id in &plan.transfers {
+            let record = *self
+                .transfers
+                .get(transfer_id)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+            let instance = self
+                .instances
+                .get_mut(&record.capability)
+                .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+
+            if let Some(staged) = staged_returns.iter().find(|item| item.transfer == *transfer_id) {
+                if let Some(parent_transfer) = record.parent_transfer {
+                    instance.owner = record.source_owner;
+                    instance.state = CapabilityInstanceState::InTransit {
+                        transfer: parent_transfer,
+                    };
+                } else {
+                    instance.owner = record.source_owner;
+                    instance.state = CapabilityInstanceState::Available;
+                }
+
+                let record = self
+                    .transfers
+                    .get_mut(transfer_id)
+                    .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+                record.state = CapabilityTransferState::Returned;
+                record.returned_at = Some(staged.returned_at);
+            } else {
+                instance.state = CapabilityInstanceState::Consumed;
+                let record = self
+                    .transfers
+                    .get_mut(transfer_id)
+                    .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+                record.state = CapabilityTransferState::Consumed;
+            }
+        }
+
+        self.next_return_sequence = next_return_sequence;
+        self.version = next_version;
+        debug_assert!(self.validate_structure().is_ok());
+        Ok(staged_returns)
+    }
+
+    /// Return one transfer through the same staged termination machinery.
+    /// This compatibility boundary terminates the transfer's destination
+    /// invocation and therefore may reconcile additional incoming transfers.
     pub(crate) fn return_transfer<F>(
         &mut self,
         transfer: TransferId,
         resolve_invocation: F,
     ) -> Result<CapabilityReturn, CapabilityRuntimeError>
     where
-        F: Fn(InvocationId) -> Option<InvocationState>,
+        F: Fn(InvocationId) -> Option<InvocationState> + Copy,
     {
-        self.validate_structure()?;
-
         let record = self
             .transfers
             .get(&transfer)
             .ok_or(CapabilityRuntimeError::UnknownTransfer(transfer))?;
-
-        if record.state != CapabilityTransferState::Active {
-            return Err(CapabilityRuntimeError::InvalidTransferState(transfer));
-        }
-
-        let destination_state = resolve_invocation(record.destination_invocation)
-            .ok_or(CapabilityRuntimeError::InvalidInvocationState(
-                record.destination_invocation,
-            ))?;
-
-        if !matches!(
-            destination_state,
-            InvocationState::Returned | InvocationState::Abandoned
-        ) {
-            return Err(CapabilityRuntimeError::InvalidInvocationState(
-                record.destination_invocation,
-            ));
-        }
-
-        let sequence = self
-            .next_return_sequence
-            .ok_or(CapabilityRuntimeError::ReturnSequenceExhausted)?;
-        let next_return_sequence = sequence.checked_add(1);
-        let next_version = self.next_version()?;
-
-        let instance = self
-            .instances
-            .get_mut(&record.capability)
-            .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
-        if instance.state != (CapabilityInstanceState::InTransit { transfer }) {
-            return Err(CapabilityRuntimeError::RegistryInvariantViolation);
-        }
-        instance.owner = record.source_owner;
-        instance.state = CapabilityInstanceState::Available;
-
-        let record = self
-            .transfers
-            .get_mut(&transfer)
-            .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
-        record.state = CapabilityTransferState::Returned;
-        record.returned_at = Some(sequence);
-
-        self.next_return_sequence = next_return_sequence;
-        self.version = next_version;
-        self.validate_structure()?;
-
-        Ok(CapabilityReturn {
-            transfer,
-            returned_at: sequence,
-        })
+        let plan = self.plan_termination(record.destination_invocation, resolve_invocation)?;
+        let returns = self.commit_termination(&plan, resolve_invocation)?;
+        returns
+            .into_iter()
+            .find(|item| item.transfer == transfer)
+            .ok_or(CapabilityRuntimeError::InvalidTerminationTransfer(transfer))
     }
 
-    /// Validate all internal ownership, transfer, and sequence invariants.
+    /// Validate all internal ownership, transfer, ancestry, and sequence invariants.
     pub(crate) fn validate_structure(&self) -> Result<(), CapabilityRuntimeError> {
         let mut seen_return_sequences = BTreeSet::new();
         let mut max_return_sequence = None;
@@ -610,23 +757,41 @@ impl CapabilityLedger {
                 .get(&transfer.capability)
                 .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
 
+            if let Some(parent_id) = transfer.parent_transfer {
+                let parent = self
+                    .transfers
+                    .get(&parent_id)
+                    .ok_or(CapabilityRuntimeError::InvalidTerminationAncestry(*id))?;
+                if parent.capability != transfer.capability
+                    || parent.destination_invocation != transfer.source_invocation
+                    || parent.destination_owner != transfer.source_owner
+                {
+                    return Err(CapabilityRuntimeError::InvalidTerminationAncestry(*id));
+                }
+                if parent_id >= *id {
+                    return Err(CapabilityRuntimeError::InvalidTerminationAncestry(*id));
+                }
+            }
+
             match transfer.state {
                 CapabilityTransferState::Active => {
-                    if instance.state
-                        != (CapabilityInstanceState::InTransit { transfer: *id })
-                    {
+                    if instance.state != (CapabilityInstanceState::InTransit { transfer: *id }) {
                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                     }
                     if transfer.returned_at.is_some() {
                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                     }
+                    if let Some(parent_id) = transfer.parent_transfer {
+                        let parent = self
+                            .transfers
+                            .get(&parent_id)
+                            .ok_or(CapabilityRuntimeError::InvalidTerminationAncestry(*id))?;
+                        if parent.state != CapabilityTransferState::Active {
+                            return Err(CapabilityRuntimeError::InvalidTerminationAncestry(*id));
+                        }
+                    }
                 }
                 CapabilityTransferState::Returned => {
-                    if instance.state != CapabilityInstanceState::Available
-                        || instance.owner != transfer.source_owner
-                    {
-                        return Err(CapabilityRuntimeError::RegistryInvariantViolation);
-                    }
                     let sequence = transfer
                         .returned_at
                         .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
@@ -636,9 +801,57 @@ impl CapabilityLedger {
                     max_return_sequence = Some(
                         max_return_sequence.map_or(sequence, |max| max.max(sequence)),
                     );
+
+                    match transfer.parent_transfer {
+                        None => {
+                            if instance.state != CapabilityInstanceState::Available
+                                || instance.owner != transfer.source_owner
+                            {
+                                return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                            }
+                        }
+                        Some(parent_id) => {
+                            let parent = self
+                                .transfers
+                                .get(&parent_id)
+                                .ok_or(CapabilityRuntimeError::InvalidTerminationAncestry(*id))?;
+                            match parent.state {
+                                CapabilityTransferState::Active => {
+                                    if instance.state
+                                        != (CapabilityInstanceState::InTransit {
+                                            transfer: parent_id,
+                                        })
+                                        || instance.owner != parent.destination_owner
+                                    {
+                                        return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                                    }
+                                }
+                                CapabilityTransferState::Returned => {
+                                    let parent_sequence = parent.returned_at.ok_or(
+                                        CapabilityRuntimeError::RegistryInvariantViolation,
+                                    )?;
+                                    if sequence >= parent_sequence {
+                                        return Err(CapabilityRuntimeError::ChildReturnedAfterParent);
+                                    }
+                                    if instance.state != CapabilityInstanceState::Available
+                                        || instance.owner != transfer.source_owner
+                                    {
+                                        return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                                    }
+                                }
+                                CapabilityTransferState::Consumed => {
+                                    return Err(CapabilityRuntimeError::InvalidTerminationAncestry(
+                                        *id,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 CapabilityTransferState::Consumed => {
-                    if transfer.returned_at.is_some() {
+                    if transfer.returned_at.is_some()
+                        || instance.state != CapabilityInstanceState::Consumed
+                    {
                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                     }
                 }
