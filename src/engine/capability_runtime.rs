@@ -423,7 +423,7 @@ impl CapabilityLedger {
                     destination_invocation: plan.destination_invocation,
                     source_owner: plan.source_owner,
                     destination_owner: plan.destination_owner,
-                        parent_transfer: plan.parent_transfer,
+                    parent_transfer: plan.parent_transfer,
                     state: CapabilityTransferState::Active,
                     returned_at: None,
                 },
@@ -615,9 +615,7 @@ impl CapabilityLedger {
 
                     let sequence = next_return_sequence
                         .ok_or(CapabilityRuntimeError::ReturnSequenceExhausted)?;
-                    next_return_sequence = sequence
-                        .checked_add(1)
-                        .ok_or(CapabilityRuntimeError::ReturnSequenceOverflow)?;
+                    next_return_sequence = sequence.checked_add(1);
                     staged_returns.push(CapabilityReturn {
                         transfer: *transfer_id,
                         returned_at: sequence,
