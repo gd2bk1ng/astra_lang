@@ -195,14 +195,6 @@ pub(crate) struct CapabilityTerminationPlan {
 }
 
 impl CapabilityTerminationPlan {
-    pub(crate) const fn expected_version(&self) -> u64 {
-        self.expected_version
-    }
-
-    pub(crate) const fn invocation(&self) -> InvocationId {
-        self.invocation
-    }
-
     pub(crate) fn transfers(&self) -> &[TransferId] {
         &self.transfers
     }
