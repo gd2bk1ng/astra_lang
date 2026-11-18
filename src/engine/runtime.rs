@@ -312,12 +312,22 @@ impl RuntimeCoordinator {
             });
         }
 
-        let owner = self
+        let parent_record = self
             .registry
             .records
             .get(&parent)
-            .ok_or(RuntimeError::UnknownInvocation(parent))?
-            .owner;
+            .ok_or(RuntimeError::UnknownInvocation(parent))?;
+        if parent_record.state != InvocationState::Executing {
+            return Err(RuntimeError::ParentNotExecuting(parent));
+        }
+        if self.registry.version.checked_add(1).is_none() {
+            return Err(RuntimeError::RegistryVersionExhausted);
+        }
+
+        // Every invocation receives a distinct engine-minted authority
+        // identity. Capability ownership therefore cannot alias merely because
+        // two invocations share an ancestry chain.
+        let owner = CapabilityOwnerId::mint().ok_or(RuntimeError::OwnerIdExhausted)?;
         self.registry.prepare(&self.authority, Some(parent), owner)
     }
 
@@ -715,7 +725,7 @@ mod tests {
 
         assert_ne!(coordinator.invocation(root).unwrap().owner(),
                    CapabilityOwnerId::new_for_test(0));
-        assert_eq!(
+        assert_ne!(
             coordinator.invocation(child).unwrap().owner(),
             coordinator.invocation(root).unwrap().owner()
         );
