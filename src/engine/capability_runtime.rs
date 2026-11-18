@@ -1111,6 +1111,8 @@ mod tests {
 
         ledger.transfers.get_mut(&transfer).unwrap().state = CapabilityTransferState::Returned;
         ledger.transfers.get_mut(&transfer).unwrap().returned_at = Some(0);
+        ledger.instances.get_mut(&capability).unwrap().owner = root_owner;
+        ledger.instances.get_mut(&capability).unwrap().state = CapabilityInstanceState::Available;
         ledger.next_return_sequence = Some(1);
         assert_eq!(ledger.validate_structure(), Err(CapabilityRuntimeError::NonMonotonicReturnSequence));
     }
