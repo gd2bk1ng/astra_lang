@@ -767,4 +767,87 @@ mod tests {
             Err(RuntimeError::InvalidTransition { .. })
         ));
     }
+
+    #[test]
+    fn staged_termination_is_stale_after_an_unrelated_registry_mutation() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+
+        let plan = coordinator.prepare_termination(child).unwrap();
+        let sibling = coordinator.prepare_child(root).unwrap();
+        assert_eq!(sibling.registry_id(), coordinator.registry_id());
+
+        assert!(matches!(
+            coordinator.commit_termination(&plan),
+            Err(RuntimeError::StaleTerminationPlan { .. })
+        ));
+        assert_eq!(
+            coordinator.invocation(child).unwrap().state(),
+            InvocationState::Executing
+        );
+    }
+
+    #[test]
+    fn nested_capability_termination_is_descendant_first_and_atomic() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+        let grandchild = coordinator.prepare_child(child).unwrap();
+        coordinator.commit(grandchild).unwrap();
+        coordinator.begin_execution(grandchild).unwrap();
+
+        let capability = coordinator
+            .grant_capability(root, super::super::identity::CapabilityId::ReadFile)
+            .unwrap();
+        let parent_transfer = coordinator
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+            )
+            .unwrap()[0];
+        let child_transfer = coordinator
+            .transfer_batch(
+                child,
+                &[CapabilityTransferRequest::new(capability, grandchild)],
+            )
+            .unwrap()[0];
+
+        assert_eq!(
+            coordinator.return_invocation(child),
+            Err(RuntimeError::NonTerminalDescendant(grandchild))
+        );
+        assert_eq!(
+            coordinator.capability_transfer(child_transfer).unwrap().state(),
+            super::super::capability_runtime::CapabilityTransferState::Active
+        );
+
+        coordinator.return_invocation(grandchild).unwrap();
+        assert_eq!(
+            coordinator.capability_transfer(child_transfer).unwrap().returned_at(),
+            Some(1)
+        );
+        assert_eq!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::InTransit {
+                transfer: parent_transfer
+            }
+        );
+
+        coordinator.return_invocation(child).unwrap();
+        assert_eq!(
+            coordinator.capability_transfer(parent_transfer).unwrap().returned_at(),
+            Some(2)
+        );
+        assert_eq!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::Available
+        );
+        coordinator.return_invocation(root).unwrap();
+    }
+
 }
