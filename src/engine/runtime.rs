@@ -339,7 +339,7 @@ impl RuntimeCoordinator {
         self.registry.transition(&self.authority, id, InvocationState::Executing)
     }
 
-    pub fn prepare_termination(&self, id: InvocationId) -> Result<RuntimeTerminationPlan, RuntimeError> {
+    pub(crate) fn prepare_termination(&self, id: InvocationId) -> Result<RuntimeTerminationPlan, RuntimeError> {
         self.registry.validate_structure()?;
         if id.registry != self.registry.id {
             return Err(RuntimeError::ForeignInvocation {
@@ -380,13 +380,13 @@ impl RuntimeCoordinator {
             .map_err(RuntimeError::Capability)?;
 
         Ok(RuntimeTerminationPlan {
-            registry_version: next_registry_version - 1,
+            registry_version: self.registry.version,
             invocation: id,
             capability,
         })
     }
 
-    pub fn commit_termination(&mut self, plan: &RuntimeTerminationPlan) -> Result<(), RuntimeError> {
+    pub(crate) fn commit_termination(&mut self, plan: &RuntimeTerminationPlan) -> Result<(), RuntimeError> {
         self.registry.validate_structure()?;
         if plan.invocation.registry != self.registry.id {
             return Err(RuntimeError::ForeignInvocation {
