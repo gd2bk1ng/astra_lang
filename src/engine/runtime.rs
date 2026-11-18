@@ -323,6 +323,9 @@ impl RuntimeCoordinator {
         if self.registry.version.checked_add(1).is_none() {
             return Err(RuntimeError::RegistryVersionExhausted);
         }
+        if self.registry.next_invocation_id.is_none() {
+            return Err(RuntimeError::InvocationIdExhausted);
+        }
 
         // Every invocation receives a distinct engine-minted authority
         // identity. Capability ownership therefore cannot alias merely because
