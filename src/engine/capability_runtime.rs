@@ -76,6 +76,7 @@ pub struct CapabilityTransferRecord {
     destination_invocation: InvocationId,
     source_owner: CapabilityOwnerId,
     destination_owner: CapabilityOwnerId,
+    parent_transfer: Option<TransferId>,
     state: CapabilityTransferState,
     returned_at: Option<u64>,
 }
@@ -103,6 +104,10 @@ impl CapabilityTransferRecord {
 
     pub const fn destination_owner(self) -> CapabilityOwnerId {
         self.destination_owner
+    }
+
+    pub const fn parent_transfer(self) -> Option<TransferId> {
+        self.parent_transfer
     }
 
     pub const fn state(self) -> CapabilityTransferState {
@@ -137,6 +142,10 @@ pub enum CapabilityRuntimeError {
     DuplicateReturnSequence(u64),
     NonMonotonicReturnSequence,
     ChildReturnedAfterParent,
+    StaleTerminationPlan { expected_version: u64, actual_version: u64 },
+    InvalidTerminationTransfer(TransferId),
+    InvalidTerminationAncestry(TransferId),
+    ReturnSequenceOverflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +187,27 @@ impl CapabilityReturn {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CapabilityTerminationPlan {
+    expected_version: u64,
+    invocation: InvocationId,
+    transfers: Vec<TransferId>,
+}
+
+impl CapabilityTerminationPlan {
+    pub(crate) const fn expected_version(&self) -> u64 {
+        self.expected_version
+    }
+
+    pub(crate) const fn invocation(&self) -> InvocationId {
+        self.invocation
+    }
+
+    pub(crate) fn transfers(&self) -> &[TransferId] {
+        &self.transfers
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PlannedTransfer {
     id: TransferId,
@@ -186,6 +216,7 @@ struct PlannedTransfer {
     destination_invocation: InvocationId,
     source_owner: CapabilityOwnerId,
     destination_owner: CapabilityOwnerId,
+    parent_transfer: Option<TransferId>,
 }
 
 #[derive(Debug)]
@@ -336,6 +367,28 @@ impl CapabilityLedger {
                 .ok_or(CapabilityRuntimeError::TransferIdExhausted)?;
             next_transfer_id = transfer_sequence.checked_add(1);
 
+            let parent_transfer = match instance.state {
+                CapabilityInstanceState::Available => None,
+                CapabilityInstanceState::InTransit { transfer } => {
+                    let parent = self
+                        .transfers
+                        .get(&transfer)
+                        .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+                    if parent.state != CapabilityTransferState::Active
+                        || parent.destination_invocation != source_invocation
+                        || parent.destination_owner != source_owner
+                    {
+                        return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                    }
+                    Some(transfer)
+                }
+                CapabilityInstanceState::Consumed => {
+                    return Err(CapabilityRuntimeError::CapabilityNotAvailable(
+                        request.capability,
+                    ))
+                }
+            };
+
             planned.push(PlannedTransfer {
                 id: TransferId(transfer_sequence),
                 capability: request.capability,
@@ -343,6 +396,7 @@ impl CapabilityLedger {
                 destination_invocation: request.destination,
                 source_owner,
                 destination_owner,
+                parent_transfer,
             });
         }
 
@@ -369,6 +423,7 @@ impl CapabilityLedger {
                     destination_invocation: plan.destination_invocation,
                     source_owner: plan.source_owner,
                     destination_owner: plan.destination_owner,
+                        parent_transfer: plan.parent_transfer,
                     state: CapabilityTransferState::Active,
                     returned_at: None,
                 },
