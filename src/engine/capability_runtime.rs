@@ -1117,4 +1117,126 @@ mod tests {
         assert_eq!(ledger.validate_structure(), Err(CapabilityRuntimeError::NonMonotonicReturnSequence));
     }
 
+
+    #[test]
+    fn duplicate_return_sequences_are_rejected_independently() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let first = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let second = ledger.grant(root_owner, CapabilityId::WriteFile).unwrap();
+        ledger
+            .transfer_batch(
+                root,
+                &[
+                    CapabilityTransferRequest::new(first, child),
+                    CapabilityTransferRequest::new(second, child),
+                ],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap();
+        let plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        ledger
+            .commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        let ids = plan.transfers();
+        let first_sequence = ledger.transfer(ids[0]).unwrap().returned_at().unwrap();
+        ledger.transfers.get_mut(&ids[1]).unwrap().returned_at = Some(first_sequence);
+        ledger.next_return_sequence = Some(3);
+        assert_eq!(
+            ledger.validate_structure(),
+            Err(CapabilityRuntimeError::DuplicateReturnSequence(first_sequence))
+        );
+    }
+
+    #[test]
+    fn missing_return_sequence_is_rejected_independently() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+        let plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        ledger
+            .commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        ledger.transfers.get_mut(&transfer).unwrap().returned_at = None;
+        assert_eq!(
+            ledger.validate_structure(),
+            Err(CapabilityRuntimeError::RegistryInvariantViolation)
+        );
+    }
+
+    #[test]
+    fn return_sequence_maximum_is_allocated_once_then_exhausted_atomically() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let first = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(first, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+        ledger.next_return_sequence = Some(u64::MAX);
+        let plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        let returned = ledger
+            .commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        assert_eq!(returned[0].returned_at(), u64::MAX);
+        assert_eq!(ledger.next_return_sequence, None);
+
+        let second = ledger.grant(root_owner, CapabilityId::WriteFile).unwrap();
+        ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(second, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap();
+        let stale = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        let before = ledger.version();
+        assert_eq!(
+            ledger.commit_termination(&stale, |id| (id == child).then_some(InvocationState::Executing)),
+            Err(CapabilityRuntimeError::ReturnSequenceExhausted)
+        );
+        assert_eq!(ledger.version(), before);
+        assert_eq!(
+            ledger.instance(second).unwrap().state(),
+            CapabilityInstanceState::InTransit {
+                transfer: TransferId(2)
+            }
+        );
+        assert_eq!(ledger.transfer(transfer).unwrap().returned_at(), Some(u64::MAX));
+    }
+
 }
