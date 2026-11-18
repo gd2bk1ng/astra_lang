@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use super::capability_runtime::{
     CapabilityInstanceId, CapabilityLedger, CapabilityRuntimeError, CapabilityTransferRequest,
-    CapabilityTerminationPlan, CapabilityTransferRecord, CapabilityReturn,
+    CapabilityTerminationPlan, CapabilityTransferRecord,
 };
 use super::identity::CapabilityOwnerId;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -523,21 +523,6 @@ impl RuntimeCoordinator {
 
         self.capability_ledger
             .consume(invocation, capability, |id| snapshot.get(&id).copied())
-    }
-
-    pub fn return_capability_transfer(
-        &mut self,
-        transfer: super::capability_runtime::TransferId,
-    ) -> Result<CapabilityReturn, CapabilityRuntimeError> {
-        let snapshot = self
-            .registry
-            .records
-            .iter()
-            .map(|(&id, record)| (id, record.state))
-            .collect::<BTreeMap<_, _>>();
-
-        self.capability_ledger
-            .return_transfer(transfer, |id| snapshot.get(&id).copied())
     }
 
     pub fn invocations(&self) -> impl Iterator<Item = &RuntimeInvocationRecord> {
