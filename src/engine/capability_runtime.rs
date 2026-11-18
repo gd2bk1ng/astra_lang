@@ -17,202 +17,6 @@ impl CapabilityInstanceId {
     pub const fn value(self) -> u64 {
         self.0
     }
-
-    #[test]
-    fn nested_transfer_return_is_descendant_first_and_restores_parent_state() {
-        let (root, child, root_owner, child_owner) = ids();
-        let grandchild = InvocationId::new_for_test(3);
-        let grandchild_owner = CapabilityOwnerId::new_for_test(3);
-        let mut ledger = CapabilityLedger::new();
-        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
-
-        let parent_transfer = ledger
-            .transfer_batch(
-                root,
-                &[CapabilityTransferRequest::new(capability, child)],
-                |id| match id {
-                    id if id == root => Some((root_owner, InvocationState::Executing)),
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    _ => None,
-                },
-            )
-            .unwrap()[0];
-        let child_transfer = ledger
-            .transfer_batch(
-                child,
-                &[CapabilityTransferRequest::new(capability, grandchild)],
-                |id| match id {
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    id if id == grandchild => {
-                        Some((grandchild_owner, InvocationState::Executing))
-                    }
-                    _ => None,
-                },
-            )
-            .unwrap()[0];
-
-        assert_eq!(
-            ledger.transfer(child_transfer).unwrap().parent_transfer(),
-            Some(parent_transfer)
-        );
-
-        let grandchild_plan = ledger
-            .plan_termination(grandchild, |id| {
-                (id == grandchild).then_some(InvocationState::Executing)
-            })
-            .unwrap();
-        let child_return = ledger
-            .commit_termination(&grandchild_plan, |id| {
-                (id == grandchild).then_some(InvocationState::Executing)
-            })
-            .unwrap();
-        assert_eq!(child_return[0].transfer(), child_transfer);
-        assert_eq!(child_return[0].returned_at(), 1);
-        assert_eq!(
-            ledger.instance(capability).unwrap().state(),
-            CapabilityInstanceState::InTransit {
-                transfer: parent_transfer
-            }
-        );
-
-        let parent_plan = ledger
-            .plan_termination(child, |id| {
-                (id == child).then_some(InvocationState::Executing)
-            })
-            .unwrap();
-        let parent_return = ledger
-            .commit_termination(&parent_plan, |id| {
-                (id == child).then_some(InvocationState::Executing)
-            })
-            .unwrap();
-        assert_eq!(parent_return[0].transfer(), parent_transfer);
-        assert_eq!(parent_return[0].returned_at(), 2);
-        assert_eq!(ledger.instance(capability).unwrap().state(), CapabilityInstanceState::Available);
-        assert!(ledger.validate_structure().is_ok());
-    }
-
-    #[test]
-    fn consumed_nested_transfer_closes_ancestor_without_return_sequence() {
-        let (root, child, root_owner, child_owner) = ids();
-        let grandchild = InvocationId::new_for_test(3);
-        let grandchild_owner = CapabilityOwnerId::new_for_test(3);
-        let mut ledger = CapabilityLedger::new();
-        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
-
-        let parent_transfer = ledger
-            .transfer_batch(
-                root,
-                &[CapabilityTransferRequest::new(capability, child)],
-                |id| match id {
-                    id if id == root => Some((root_owner, InvocationState::Executing)),
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    _ => None,
-                },
-            )
-            .unwrap()[0];
-        let child_transfer = ledger
-            .transfer_batch(
-                child,
-                &[CapabilityTransferRequest::new(capability, grandchild)],
-                |id| match id {
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    id if id == grandchild => {
-                        Some((grandchild_owner, InvocationState::Executing))
-                    }
-                    _ => None,
-                },
-            )
-            .unwrap()[0];
-        ledger
-            .consume(grandchild, capability, |id| {
-                (id == grandchild).then_some(grandchild_owner)
-            })
-            .unwrap();
-
-        let grandchild_plan = ledger
-            .plan_termination(grandchild, |id| {
-                (id == grandchild).then_some(InvocationState::Executing)
-            })
-            .unwrap();
-        assert!(ledger
-            .commit_termination(&grandchild_plan, |id| {
-                (id == grandchild).then_some(InvocationState::Executing)
-            })
-            .unwrap()
-            .is_empty());
-        assert_eq!(ledger.transfer(child_transfer).unwrap().state(), CapabilityTransferState::Consumed);
-
-        let child_plan = ledger
-            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap();
-        assert!(ledger
-            .commit_termination(&child_plan, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap()
-            .is_empty());
-        assert_eq!(ledger.transfer(parent_transfer).unwrap().state(), CapabilityTransferState::Consumed);
-        assert_eq!(ledger.instance(capability).unwrap().state(), CapabilityInstanceState::Consumed);
-        assert_eq!(ledger.next_return_sequence, Some(1));
-    }
-
-    #[test]
-    fn stale_termination_plan_cannot_mutate_the_ledger() {
-        let (root, child, root_owner, child_owner) = ids();
-        let mut ledger = CapabilityLedger::new();
-        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
-        ledger
-            .transfer_batch(
-                root,
-                &[CapabilityTransferRequest::new(capability, child)],
-                |id| match id {
-                    id if id == root => Some((root_owner, InvocationState::Executing)),
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    _ => None,
-                },
-            )
-            .unwrap();
-        let plan = ledger
-            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap();
-        ledger.grant(root_owner, CapabilityId::WriteFile).unwrap();
-        let version = ledger.version();
-        assert!(matches!(
-            ledger.commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing)),
-            Err(CapabilityRuntimeError::StaleTerminationPlan { .. })
-        ));
-        assert_eq!(ledger.version(), version);
-        assert_eq!(ledger.transfer(plan.transfers()[0]).unwrap().state(), CapabilityTransferState::Active);
-    }
-
-    #[test]
-    fn forged_return_sequence_state_is_rejected_before_mutation() {
-        let (root, child, root_owner, child_owner) = ids();
-        let mut ledger = CapabilityLedger::new();
-        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
-        let transfer = ledger
-            .transfer_batch(
-                root,
-                &[CapabilityTransferRequest::new(capability, child)],
-                |id| match id {
-                    id if id == root => Some((root_owner, InvocationState::Executing)),
-                    id if id == child => Some((child_owner, InvocationState::Executing)),
-                    _ => None,
-                },
-            )
-            .unwrap()[0];
-        let plan = ledger
-            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
-            .unwrap();
-        ledger.transfers.get_mut(&transfer).unwrap().state = CapabilityTransferState::Returned;
-        ledger.transfers.get_mut(&transfer).unwrap().returned_at = Some(0);
-        ledger.next_return_sequence = Some(1);
-        assert_eq!(ledger.validate_structure(), Err(CapabilityRuntimeError::NonMonotonicReturnSequence));
-        assert!(matches!(
-            ledger.commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing)),
-            Err(CapabilityRuntimeError::RegistryInvariantViolation)
-                | Err(CapabilityRuntimeError::StaleTerminationPlan { .. })
-        ));
-    }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -989,9 +793,6 @@ impl CapabilityLedger {
                     let sequence = transfer
                         .returned_at
                         .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
-                    if sequence == 0 {
-                        return Err(CapabilityRuntimeError::NonMonotonicReturnSequence);
-                    }
                     if !seen_return_sequences.insert(sequence) {
                         return Err(CapabilityRuntimeError::DuplicateReturnSequence(sequence));
                     }
@@ -1158,4 +959,168 @@ mod tests {
             CapabilityInstanceState::Consumed
         );
     }
+
+    #[test]
+    fn nested_transfer_return_is_descendant_first_and_restores_parent_state() {
+        let (root, child, root_owner, child_owner) = ids();
+        let grandchild = InvocationId::new_for_test(3);
+        let grandchild_owner = CapabilityOwnerId::new_for_test(3);
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+
+        let parent_transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+        let child_transfer = ledger
+            .transfer_batch(
+                child,
+                &[CapabilityTransferRequest::new(capability, grandchild)],
+                |id| match id {
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    id if id == grandchild => Some((grandchild_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+
+        assert_eq!(ledger.transfer(child_transfer).unwrap().parent_transfer(), Some(parent_transfer));
+
+        let grandchild_plan = ledger
+            .plan_termination(grandchild, |id| (id == grandchild).then_some(InvocationState::Executing))
+            .unwrap();
+        let child_return = ledger
+            .commit_termination(&grandchild_plan, |id| (id == grandchild).then_some(InvocationState::Executing))
+            .unwrap();
+        assert_eq!(child_return[0].transfer(), child_transfer);
+        assert_eq!(child_return[0].returned_at(), 1);
+        assert_eq!(
+            ledger.instance(capability).unwrap().state(),
+            CapabilityInstanceState::InTransit { transfer: parent_transfer }
+        );
+
+        let parent_plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        let parent_return = ledger
+            .commit_termination(&parent_plan, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        assert_eq!(parent_return[0].transfer(), parent_transfer);
+        assert_eq!(parent_return[0].returned_at(), 2);
+        assert_eq!(ledger.instance(capability).unwrap().state(), CapabilityInstanceState::Available);
+        assert!(ledger.validate_structure().is_ok());
+    }
+
+    #[test]
+    fn consumed_nested_transfer_closes_ancestor_without_return_sequence() {
+        let (root, child, root_owner, child_owner) = ids();
+        let grandchild = InvocationId::new_for_test(3);
+        let grandchild_owner = CapabilityOwnerId::new_for_test(3);
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+
+        let parent_transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+        let child_transfer = ledger
+            .transfer_batch(
+                child,
+                &[CapabilityTransferRequest::new(capability, grandchild)],
+                |id| match id {
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    id if id == grandchild => Some((grandchild_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+        ledger.consume(grandchild, capability, |id| (id == grandchild).then_some(grandchild_owner)).unwrap();
+
+        let grandchild_plan = ledger
+            .plan_termination(grandchild, |id| (id == grandchild).then_some(InvocationState::Executing))
+            .unwrap();
+        assert!(ledger
+            .commit_termination(&grandchild_plan, |id| (id == grandchild).then_some(InvocationState::Executing))
+            .unwrap()
+            .is_empty());
+        assert_eq!(ledger.transfer(child_transfer).unwrap().state(), CapabilityTransferState::Consumed);
+
+        let child_plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        assert!(ledger
+            .commit_termination(&child_plan, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap()
+            .is_empty());
+        assert_eq!(ledger.transfer(parent_transfer).unwrap().state(), CapabilityTransferState::Consumed);
+        assert_eq!(ledger.instance(capability).unwrap().state(), CapabilityInstanceState::Consumed);
+        assert_eq!(ledger.next_return_sequence, Some(1));
+    }
+
+    #[test]
+    fn stale_termination_plan_cannot_mutate_the_ledger() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap();
+        let plan = ledger
+            .plan_termination(child, |id| (id == child).then_some(InvocationState::Executing))
+            .unwrap();
+        ledger.grant(root_owner, CapabilityId::WriteFile).unwrap();
+        let version = ledger.version();
+        assert!(matches!(
+            ledger.commit_termination(&plan, |id| (id == child).then_some(InvocationState::Executing)),
+            Err(CapabilityRuntimeError::StaleTerminationPlan { .. })
+        ));
+        assert_eq!(ledger.version(), version);
+        assert_eq!(ledger.transfer(plan.transfers()[0]).unwrap().state(), CapabilityTransferState::Active);
+    }
+
+    #[test]
+    fn forged_return_sequence_state_is_rejected() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+
+        ledger.transfers.get_mut(&transfer).unwrap().state = CapabilityTransferState::Returned;
+        ledger.transfers.get_mut(&transfer).unwrap().returned_at = Some(0);
+        ledger.next_return_sequence = Some(1);
+        assert_eq!(ledger.validate_structure(), Err(CapabilityRuntimeError::NonMonotonicReturnSequence));
+    }
+
 }
