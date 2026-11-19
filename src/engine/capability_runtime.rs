@@ -915,8 +915,11 @@ impl CapabilityLedger {
                                     if sequence >= parent_sequence {
                                         return Err(CapabilityRuntimeError::ChildReturnedAfterParent);
                                     }
+                                    // Once the parent transfer has also returned,
+                                    // ownership has propagated all the way to the
+                                    // parent's source, not the child's former source.
                                     if instance.state != CapabilityInstanceState::Available
-                                        || instance.owner != transfer.source_owner
+                                        || instance.owner != parent.source_owner
                                     {
                                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                                     }
@@ -963,7 +966,7 @@ impl CapabilityLedger {
                                 }
                                 CapabilityTransferState::Returned | CapabilityTransferState::Abandoned => {
                                     if instance.state != CapabilityInstanceState::Available
-                                        || instance.owner != transfer.source_owner
+                                        || instance.owner != parent.source_owner
                                     {
                                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                                     }
