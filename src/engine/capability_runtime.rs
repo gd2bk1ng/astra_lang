@@ -921,6 +921,14 @@ impl CapabilityLedger {
                                         return Err(CapabilityRuntimeError::RegistryInvariantViolation);
                                     }
                                 }
+                                CapabilityTransferState::Abandoned => {
+                                    if parent.returned_at.is_some()
+                                        || instance.state != CapabilityInstanceState::Available
+                                        || instance.owner != parent.source_owner
+                                    {
+                                        return Err(CapabilityRuntimeError::RegistryInvariantViolation);
+                                    }
+                                }
                                 CapabilityTransferState::Consumed => {
                                     return Err(CapabilityRuntimeError::InvalidTerminationAncestry(
                                         *id,
