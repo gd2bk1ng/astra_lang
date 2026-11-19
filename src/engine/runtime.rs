@@ -518,7 +518,7 @@ impl RuntimeCoordinator {
             .registry
             .records
             .iter()
-            .map(|(&id, record)| (id, record.owner))
+            .map(|(&id, record)| (id, (record.owner, record.state)))
             .collect::<BTreeMap<_, _>>();
 
         self.capability_ledger
