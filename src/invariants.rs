@@ -10,6 +10,7 @@ pub enum AstInvariantKind {
     ContainmentViolation,
     SiblingOrderViolation,
     EmptyNodeSpan,
+    SourceProvenanceViolation,
 }
 
 /// A single structural invariant violation.
@@ -38,6 +39,7 @@ pub fn validate_program_invariants<'src>(
     let mut validator = Validator { source, errors: Vec::new() };
 
     validator.check_span(program.span, "program", false);
+    validator.validate_source_provenance(program);
 
     let mut previous = None;
     for declaration in &program.declarations {
@@ -368,6 +370,138 @@ impl<'src> Validator<'src> {
             self.check_containment(parent, argument.span(), "annotation argument", "annotation");
             self.check_sibling_order(previous, argument.span(), "annotation arguments");
             previous = Some(argument.span());
+        }
+    }
+
+    fn check_source_text(&mut self, text: &'src str, enclosing: Span, label: &str) {
+        let source_start = self.source.as_ptr() as usize;
+        let source_end = source_start.saturating_add(self.source.len());
+        let text_start = text.as_ptr() as usize;
+        let text_end = text_start.saturating_add(text.len());
+
+        if text_start < source_start || text_end > source_end {
+            self.error(
+                AstInvariantKind::SourceProvenanceViolation,
+                enclosing,
+                format!("{label} does not borrow from the validated source buffer"),
+            );
+            return;
+        }
+
+        let start = text_start - source_start;
+        let end = start.saturating_add(text.len());
+        if start < enclosing.start || end > enclosing.end {
+            self.error(
+                AstInvariantKind::SourceProvenanceViolation,
+                enclosing,
+                format!("{label} source range {start}..{end} is outside enclosing span {}..{}", enclosing.start, enclosing.end),
+            );
+        }
+    }
+
+    fn validate_source_provenance(&mut self, program: &Program<'src>) {
+        for declaration in &program.declarations {
+            match declaration {
+                Declaration::Function(function) => {
+                    self.check_source_text(function.name, function.span, "function name");
+                    for parameter in &function.params {
+                        self.check_source_text(parameter.name, parameter.span, "parameter name");
+                        self.validate_type_text(&parameter.ty);
+                    }
+                    if let Some(return_type) = &function.return_type { self.validate_type_text(return_type); }
+                    self.validate_block_text(&function.body);
+                }
+                Declaration::Rule(rule) => {
+                    self.check_source_text(rule.name, rule.span, "rule name");
+                    for parameter in &rule.params {
+                        self.check_source_text(parameter.name, parameter.span, "parameter name");
+                        self.validate_type_text(&parameter.ty);
+                    }
+                    if let Some(return_type) = &rule.return_type { self.validate_type_text(return_type); }
+                    self.validate_block_text(&rule.body);
+                }
+                Declaration::Intent(intent) => {
+                    self.check_source_text(intent.name, intent.span, "intent name");
+                    for member in &intent.members {
+                        self.check_source_text(member.name, member.span, "intent member name");
+                        self.validate_intent_value_text(&member.value, member.span);
+                    }
+                }
+            }
+        }
+    }
+
+    fn validate_type_text(&mut self, type_ref: &TypeRef<'src>) {
+        self.check_source_text(type_ref.name, type_ref.span, "type name");
+        for argument in &type_ref.arguments { self.validate_type_text(argument); }
+    }
+
+    fn validate_intent_value_text(&mut self, value: &IntentValue<'src>, parent: Span) {
+        match value {
+            IntentValue::String(text) => self.check_source_text(text, parent, "intent string value"),
+            IntentValue::Block(block) => self.validate_block_text(block),
+            IntentValue::Goal(goal) => {
+                self.check_source_text(goal.name, goal.span, "goal name");
+                for member in &goal.members {
+                    match member {
+                        GoalMember::Description { value, span } => self.check_source_text(value, *span, "goal description"),
+                        GoalMember::Priority { value, .. } | GoalMember::Condition { value, .. } | GoalMember::Target { value, .. } => self.validate_expression_text(value),
+                    }
+                }
+            }
+            IntentValue::Effects(effects) => for item in &effects.items { self.check_source_text(item.name, item.span, "effect name"); },
+            IntentValue::Uncertainty(uncertainty) => for member in &uncertainty.members {
+                match member {
+                    UncertaintyMember::Confidence { value, .. } | UncertaintyMember::Evidence { value, .. } => self.validate_expression_text(value),
+                    UncertaintyMember::Assumption { value, span } | UncertaintyMember::Source { value, span } => self.check_source_text(value, *span, "uncertainty text"),
+                }
+            },
+            IntentValue::Governance(governance) => for member in &governance.members {
+                match member {
+                    GovernanceMember::Requires { value, span } | GovernanceMember::Approval { value, span } | GovernanceMember::Policy { value, span } => self.check_source_text(value, *span, "governance text"),
+                    GovernanceMember::Constraint { value, .. } => self.validate_expression_text(value),
+                }
+            },
+        }
+    }
+
+    fn validate_block_text(&mut self, block: &Block<'src>) {
+        for statement in &block.statements {
+            match statement {
+                Statement::Let { name, value, span } => {
+                    self.check_source_text(name, *span, "let binding name");
+                    if let Some(value) = value { self.validate_expression_text(value); }
+                }
+                Statement::Return { value, .. } | Statement::Expression { expression: value, .. } => self.validate_expression_text(value),
+                Statement::Backtrack { body, .. } => self.validate_block_text(body),
+                Statement::Annotation(annotation) => {
+                    self.check_source_text(annotation.name, annotation.span, "annotation name");
+                    for argument in &annotation.arguments { self.validate_expression_text(argument); }
+                }
+            }
+        }
+    }
+
+    fn validate_expression_text(&mut self, expression: &Expression<'src>) {
+        match expression {
+            Expression::Identifier(name, span) => self.check_source_text(name, *span, "identifier"),
+            Expression::Literal(Literal::String(value), span) => self.check_source_text(value, *span, "string literal"),
+            Expression::Literal(_, _) => {}
+            Expression::Call { callee, arguments, .. } => {
+                self.validate_expression_text(callee);
+                for argument in arguments { self.validate_expression_text(argument); }
+            }
+            Expression::Unary { operand, .. } => self.validate_expression_text(operand),
+            Expression::Binary { left, right, .. } => {
+                self.validate_expression_text(left);
+                self.validate_expression_text(right);
+            }
+            Expression::Block(block) => self.validate_block_text(block),
+            Expression::Symbolic { identifier, span } => self.check_source_text(identifier, *span, "symbolic identifier"),
+            Expression::SelfModify { target, patch, span } => {
+                self.check_source_text(target, *span, "self-modify target");
+                self.validate_expression_text(patch);
+            }
         }
     }
 
