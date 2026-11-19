@@ -83,9 +83,21 @@ struct RuntimeInvocationRegistry {
 
 impl RuntimeInvocationRegistry {
     fn new() -> Result<Self, RuntimeError> {
-        let id = NEXT_REGISTRY_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
-            .map_err(|_| RuntimeError::RegistryIdExhausted)?;
+        let id = loop {
+            let current = NEXT_REGISTRY_ID.load(Ordering::Relaxed);
+            let Some(next) = current.checked_add(1) else {
+                return Err(RuntimeError::RegistryIdExhausted);
+            };
+            match NEXT_REGISTRY_ID.compare_exchange(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break current,
+                Err(_) => continue,
+            }
+        };
         Ok(Self {
             id: RegistryId(id),
             next_invocation_id: Some(1),
@@ -122,10 +134,10 @@ impl RuntimeInvocationRegistry {
         }
 
         let id = self.allocate_id()?;
-        if let Some(parent_id) = parent {
-            if parent_id >= id {
-                return Err(RuntimeError::ParentIdNotLessThanChild { parent: parent_id, child: id });
-            }
+        if let Some(parent_id) = parent
+            && parent_id >= id
+        {
+            return Err(RuntimeError::ParentIdNotLessThanChild { parent: parent_id, child: id });
         }
 
         self.records.insert(id, RuntimeInvocationRecord {
@@ -162,10 +174,10 @@ impl RuntimeInvocationRegistry {
             return Err(RuntimeError::InvalidTransition { from, to });
         }
 
-        if matches!(to, InvocationState::Returned | InvocationState::Abandoned) {
-            if let Some(descendant) = self.first_nonterminal_descendant(id) {
-                return Err(RuntimeError::NonTerminalDescendant(descendant));
-            }
+        if matches!(to, InvocationState::Returned | InvocationState::Abandoned)
+            && let Some(descendant) = self.first_nonterminal_descendant(id)
+        {
+            return Err(RuntimeError::NonTerminalDescendant(descendant));
         }
 
         let Some(record) = self.records.get_mut(&id) else {
