@@ -165,3 +165,48 @@ fn catches_nested_statement_ordering() {
     let report = validate_program_invariants(&program, source).expect_err("overlapping statements must fail");
     assert!(kinds(&report).contains(&AstInvariantKind::SiblingOrderViolation));
 }
+
+
+#[test]
+fn catches_borrowed_text_from_another_source_buffer() {
+    let source = "fn f() {}";
+    let foreign_source = String::from("f");
+    let function = Function {
+        name: foreign_source.as_str(),
+        params: vec![],
+        return_type: None,
+        body: Block { statements: vec![], span: Span::new(8, 10) },
+        span: Span::new(0, source.len()),
+        grad: false,
+    };
+    let program = Program {
+        declarations: vec![Declaration::Function(function)],
+        span: Span::new(0, source.len()),
+    };
+
+    let report = validate_program_invariants(&program, source)
+        .expect_err("foreign borrowed text must fail provenance validation");
+    assert!(kinds(&report).contains(&AstInvariantKind::SourceProvenanceViolation));
+}
+
+#[test]
+fn catches_borrowed_text_outside_its_enclosing_node() {
+    let source = "fn first() {} fn second() {}";
+    let foreign_name = &source[14..20];
+    let function = Function {
+        name: foreign_name,
+        params: vec![],
+        return_type: None,
+        body: Block { statements: vec![], span: Span::new(11, 13) },
+        span: Span::new(0, 13),
+        grad: false,
+    };
+    let program = Program {
+        declarations: vec![Declaration::Function(function)],
+        span: Span::new(0, 13),
+    };
+
+    let report = validate_program_invariants(&program, source)
+        .expect_err("borrowed text outside its node span must fail provenance validation");
+    assert!(kinds(&report).contains(&AstInvariantKind::SourceProvenanceViolation));
+}
