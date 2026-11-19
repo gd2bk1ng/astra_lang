@@ -436,12 +436,16 @@ impl CapabilityLedger {
         resolve_invocation: F,
     ) -> Result<(), CapabilityRuntimeError>
     where
-        F: Fn(InvocationId) -> Option<CapabilityOwnerId>,
+        F: Fn(InvocationId) -> Option<(CapabilityOwnerId, InvocationState)>,
     {
         self.validate_structure()?;
 
-        let owner = resolve_invocation(invocation)
-            .ok_or(CapabilityRuntimeError::InvalidInvocationState(invocation))?;
+        let Some((owner, state)) = resolve_invocation(invocation) else {
+            return Err(CapabilityRuntimeError::InvalidInvocationState(invocation));
+        };
+        if state != InvocationState::Executing {
+            return Err(CapabilityRuntimeError::InvalidInvocationState(invocation));
+        }
 
         let instance = self
             .instances
