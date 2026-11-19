@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use super::capability_runtime::{
     CapabilityInstanceId, CapabilityLedger, CapabilityRuntimeError, CapabilityTransferRequest,
-    CapabilityTerminationPlan, CapabilityTransferRecord,
+    CapabilityAbandonmentPlan, CapabilityTerminationPlan, CapabilityTransferRecord,
 };
 use super::identity::CapabilityOwnerId;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -272,6 +272,13 @@ pub(crate) struct RuntimeTerminationPlan {
     capability: CapabilityTerminationPlan,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimeAbandonmentPlan {
+    registry_version: u64,
+    invocation: InvocationId,
+    capability: CapabilityAbandonmentPlan,
+}
+
 /// Sole public authority for creating invocations and advancing their lifecycle.
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
@@ -447,13 +454,94 @@ impl RuntimeCoordinator {
         Ok(())
     }
 
+    pub(crate) fn prepare_abandonment(
+        &self,
+        id: InvocationId,
+    ) -> Result<RuntimeAbandonmentPlan, RuntimeError> {
+        self.registry.validate_structure()?;
+        if id.registry != self.registry.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.registry.id,
+                actual_registry: id.registry,
+            });
+        }
+        let record = self.registry.records.get(&id)
+            .ok_or(RuntimeError::UnknownInvocation(id))?;
+        if record.state != InvocationState::Executing {
+            return Err(RuntimeError::InvalidTransition {
+                from: record.state,
+                to: InvocationState::Abandoned,
+            });
+        }
+        if let Some(descendant) = self.registry.first_nonterminal_descendant(id) {
+            return Err(RuntimeError::NonTerminalDescendant(descendant));
+        }
+        self.registry.version.checked_add(1)
+            .ok_or(RuntimeError::RegistryVersionExhausted)?;
+
+        let snapshot = self.registry.records.iter()
+            .map(|(&invocation, record)| (invocation, record.state))
+            .collect::<BTreeMap<_, _>>();
+        let capability = self.capability_ledger
+            .plan_abandonment(id, |invocation| snapshot.get(&invocation).copied())
+            .map_err(RuntimeError::Capability)?;
+
+        Ok(RuntimeAbandonmentPlan {
+            registry_version: self.registry.version,
+            invocation: id,
+            capability,
+        })
+    }
+
+    pub(crate) fn commit_abandonment(
+        &mut self,
+        plan: &RuntimeAbandonmentPlan,
+    ) -> Result<(), RuntimeError> {
+        self.registry.validate_structure()?;
+        if plan.invocation.registry != self.registry.id {
+            return Err(RuntimeError::ForeignInvocation {
+                expected_registry: self.registry.id,
+                actual_registry: plan.invocation.registry,
+            });
+        }
+        if self.registry.version != plan.registry_version {
+            return Err(RuntimeError::StaleTerminationPlan {
+                expected_registry_version: plan.registry_version,
+                actual_registry_version: self.registry.version,
+            });
+        }
+        let record = self.registry.records.get(&plan.invocation)
+            .ok_or(RuntimeError::UnknownInvocation(plan.invocation))?;
+        if record.state != InvocationState::Executing {
+            return Err(RuntimeError::InvalidTransition {
+                from: record.state,
+                to: InvocationState::Abandoned,
+            });
+        }
+        if let Some(descendant) = self.registry.first_nonterminal_descendant(plan.invocation) {
+            return Err(RuntimeError::NonTerminalDescendant(descendant));
+        }
+        let next_registry_version = self.registry.version.checked_add(1)
+            .ok_or(RuntimeError::RegistryVersionExhausted)?;
+
+        self.capability_ledger.commit_abandonment(&plan.capability)
+            .map_err(RuntimeError::Capability)?;
+        let record = self.registry.records.get_mut(&plan.invocation)
+            .expect("invocation was preflighted before capability commit");
+        record.state = InvocationState::Abandoned;
+        self.registry.version = next_registry_version;
+        debug_assert!(self.registry.validate_structure().is_ok());
+        Ok(())
+    }
+
     pub fn return_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
         let plan = self.prepare_termination(id)?;
         self.commit_termination(&plan)
     }
 
     pub fn abandon_invocation(&mut self, id: InvocationId) -> Result<(), RuntimeError> {
-        self.registry.transition(&self.authority, id, InvocationState::Abandoned)
+        let plan = self.prepare_abandonment(id)?;
+        self.commit_abandonment(&plan)
     }
 
     pub fn invocation(&self, id: InvocationId) -> Option<&RuntimeInvocationRecord> {
@@ -764,6 +852,136 @@ mod tests {
             coordinator.return_invocation(root),
             Err(RuntimeError::InvalidTransition { .. })
         ));
+    }
+
+    #[test]
+    fn abandonment_reconciles_active_transfer_without_return_chronology() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+        let capability = coordinator.grant_capability(
+            root,
+            super::super::identity::CapabilityId::ReadFile,
+        ).unwrap();
+        let transfer = coordinator.transfer_batch(
+            root,
+            &[CapabilityTransferRequest::new(capability, child)],
+        ).unwrap()[0];
+
+        let ledger_version = coordinator.capability_ledger_version();
+        let registry_version = coordinator.registry.version;
+        coordinator.abandon_invocation(child).unwrap();
+
+        assert_eq!(coordinator.invocation(child).unwrap().state(), InvocationState::Abandoned);
+        assert_eq!(coordinator.registry.version, registry_version + 1);
+        assert_eq!(coordinator.capability_ledger_version(), ledger_version + 1);
+        assert_eq!(
+            coordinator.capability_transfer(transfer).unwrap().state(),
+            super::super::capability_runtime::CapabilityTransferState::Abandoned
+        );
+        assert_eq!(coordinator.capability_transfer(transfer).unwrap().returned_at(), None);
+        assert_eq!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::Available
+        );
+        assert!(coordinator.capability_ledger.validate_structure().is_ok());
+    }
+
+    #[test]
+    fn nested_abandonment_restores_parent_transfer_without_return_sequence() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+        let grandchild = coordinator.prepare_child(child).unwrap();
+        coordinator.commit(grandchild).unwrap();
+        coordinator.begin_execution(grandchild).unwrap();
+
+        let capability = coordinator.grant_capability(
+            root,
+            super::super::identity::CapabilityId::ReadFile,
+        ).unwrap();
+        let parent_transfer = coordinator.transfer_batch(
+            root,
+            &[CapabilityTransferRequest::new(capability, child)],
+        ).unwrap()[0];
+        let child_transfer = coordinator.transfer_batch(
+            child,
+            &[CapabilityTransferRequest::new(capability, grandchild)],
+        ).unwrap()[0];
+
+        coordinator.abandon_invocation(grandchild).unwrap();
+        assert_eq!(
+            coordinator.capability_transfer(child_transfer).unwrap().state(),
+            super::super::capability_runtime::CapabilityTransferState::Abandoned
+        );
+        assert_eq!(coordinator.capability_transfer(child_transfer).unwrap().returned_at(), None);
+        assert_eq!(
+            coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::InTransit {
+                transfer: parent_transfer
+            }
+        );
+        coordinator.abandon_invocation(child).unwrap();
+        assert_eq!(coordinator.capability_transfer(parent_transfer).unwrap().state(),
+            super::super::capability_runtime::CapabilityTransferState::Abandoned);
+        assert_eq!(coordinator.capability_transfer(parent_transfer).unwrap().returned_at(), None);
+        assert_eq!(coordinator.capability_ledger.validate_structure(), Ok(()));
+    }
+
+    #[test]
+    fn rejected_abandonment_preserves_registry_and_ledger_state_and_versions() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let child = coordinator.prepare_child(root).unwrap();
+        coordinator.commit(child).unwrap();
+        coordinator.begin_execution(child).unwrap();
+        let capability = coordinator.grant_capability(
+            root,
+            super::super::identity::CapabilityId::ReadFile,
+        ).unwrap();
+        let transfer = coordinator.transfer_batch(
+            root,
+            &[CapabilityTransferRequest::new(capability, child)],
+        ).unwrap()[0];
+        let registry_version = coordinator.registry.version;
+        let ledger_version = coordinator.capability_ledger_version();
+
+        assert_eq!(
+            coordinator.abandon_invocation(root),
+            Err(RuntimeError::NonTerminalDescendant(child))
+        );
+        assert_eq!(coordinator.registry.version, registry_version);
+        assert_eq!(coordinator.capability_ledger_version(), ledger_version);
+        assert_eq!(coordinator.invocation(root).unwrap().state(), InvocationState::Executing);
+        assert_eq!(coordinator.invocation(child).unwrap().state(), InvocationState::Executing);
+        assert_eq!(coordinator.capability_transfer(transfer).unwrap().state(),
+            super::super::capability_runtime::CapabilityTransferState::Active);
+        assert_eq!(coordinator.capability_instance(capability).unwrap().state(),
+            super::super::capability_runtime::CapabilityInstanceState::InTransit { transfer });
+    }
+
+    #[test]
+    fn stale_abandonment_plan_preserves_both_ledgers() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let plan = coordinator.prepare_abandonment(root).unwrap();
+        let registry_version = coordinator.registry.version;
+        let ledger_version = coordinator.capability_ledger_version();
+
+        coordinator.grant_capability(root, super::super::identity::CapabilityId::ReadFile).unwrap();
+        let changed_ledger_version = coordinator.capability_ledger_version();
+        assert!(changed_ledger_version > ledger_version);
+        assert!(matches!(
+            coordinator.commit_abandonment(&plan),
+            Err(RuntimeError::Capability(CapabilityRuntimeError::StaleTerminationPlan { .. }))
+        ));
+        assert_eq!(coordinator.registry.version, registry_version);
+        assert_eq!(coordinator.invocation(root).unwrap().state(), InvocationState::Executing);
+        assert_eq!(coordinator.capability_ledger_version(), changed_ledger_version);
     }
 
     #[test]
