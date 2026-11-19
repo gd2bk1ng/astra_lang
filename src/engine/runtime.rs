@@ -872,11 +872,13 @@ mod tests {
 
         let ledger_version = coordinator.capability_ledger_version();
         let registry_version = coordinator.registry.version;
+        let return_sequence = coordinator.capability_ledger.next_return_sequence;
         coordinator.abandon_invocation(child).unwrap();
 
         assert_eq!(coordinator.invocation(child).unwrap().state(), InvocationState::Abandoned);
         assert_eq!(coordinator.registry.version, registry_version + 1);
         assert_eq!(coordinator.capability_ledger_version(), ledger_version + 1);
+        assert_eq!(coordinator.capability_ledger.next_return_sequence, return_sequence);
         assert_eq!(
             coordinator.capability_transfer(transfer).unwrap().state(),
             super::super::capability_runtime::CapabilityTransferState::Abandoned
@@ -930,6 +932,25 @@ mod tests {
             super::super::capability_runtime::CapabilityTransferState::Abandoned);
         assert_eq!(coordinator.capability_transfer(parent_transfer).unwrap().returned_at(), None);
         assert_eq!(coordinator.capability_ledger.validate_structure(), Ok(()));
+    }
+
+    #[test]
+    fn stale_abandonment_plan_rejects_registry_version_change_atomically() {
+        let mut coordinator = RuntimeCoordinator::new().unwrap();
+        let root = executing_root(&mut coordinator);
+        let plan = coordinator.prepare_abandonment(root).unwrap();
+        let ledger_version = coordinator.capability_ledger_version();
+        let child = coordinator.prepare_child(root).unwrap();
+        let registry_version = coordinator.registry.version;
+
+        assert!(matches!(
+            coordinator.commit_abandonment(&plan),
+            Err(RuntimeError::StaleTerminationPlan { .. })
+        ));
+        assert_eq!(coordinator.registry.version, registry_version);
+        assert_eq!(coordinator.capability_ledger_version(), ledger_version);
+        assert_eq!(coordinator.invocation(root).unwrap().state(), InvocationState::Executing);
+        assert_eq!(coordinator.invocation(child).unwrap().state(), InvocationState::Prepared);
     }
 
     #[test]
