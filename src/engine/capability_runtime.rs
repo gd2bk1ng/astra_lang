@@ -914,6 +914,26 @@ mod tests {
     }
 
     #[test]
+    fn consumption_requires_an_executing_authority() {
+        let (root, _, root_owner, _) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+
+        assert_eq!(
+            ledger.consume(root, capability, |id| {
+                (id == root).then_some((root_owner, InvocationState::Committed))
+            }),
+            Err(CapabilityRuntimeError::InvalidInvocationState(root))
+        );
+
+        assert_eq!(ledger.version(), 1);
+        assert_eq!(
+            ledger.instance(capability).unwrap().state(),
+            CapabilityInstanceState::Available
+        );
+    }
+
+    #[test]
     fn consumed_capability_cannot_be_consumed_again() {
         let (root, _, root_owner, _) = ids();
         let mut ledger = CapabilityLedger::new();
