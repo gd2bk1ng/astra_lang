@@ -877,6 +877,9 @@ impl CapabilityLedger {
                     let sequence = transfer
                         .returned_at
                         .ok_or(CapabilityRuntimeError::RegistryInvariantViolation)?;
+                    if sequence == 0 {
+                        return Err(CapabilityRuntimeError::NonMonotonicReturnSequence);
+                    }
                     if !seen_return_sequences.insert(sequence) {
                         return Err(CapabilityRuntimeError::DuplicateReturnSequence(sequence));
                     }
@@ -990,8 +993,36 @@ impl CapabilityLedger {
 
         match (max_return_sequence, self.next_return_sequence) {
             (None, Some(1)) => {}
-            (Some(max), Some(next)) if max < u64::MAX && next == max + 1 => {}
-            (Some(u64::MAX), None) => {}
+            (Some(max), Some(next)) if max < u64::MAX && next == max + 1 => {
+                let mut expected = 1u64;
+                for actual in &seen_return_sequences {
+                    if *actual != expected {
+                        return Err(CapabilityRuntimeError::NonMonotonicReturnSequence);
+                    }
+                    expected = expected
+                        .checked_add(1)
+                        .ok_or(CapabilityRuntimeError::ReturnSequenceOverflow)?;
+                }
+                if expected != next {
+                    return Err(CapabilityRuntimeError::ReturnSequenceMismatch);
+                }
+            }
+            (Some(u64::MAX), None) => {
+                let mut expected = 1u64;
+                for actual in &seen_return_sequences {
+                    if *actual != expected {
+                        return Err(CapabilityRuntimeError::NonMonotonicReturnSequence);
+                    }
+                    if *actual != u64::MAX {
+                        expected = expected
+                            .checked_add(1)
+                            .ok_or(CapabilityRuntimeError::ReturnSequenceOverflow)?;
+                    }
+                }
+                if expected != u64::MAX {
+                    return Err(CapabilityRuntimeError::ReturnSequenceMismatch);
+                }
+            }
             _ => return Err(CapabilityRuntimeError::RegistryInvariantViolation),
         }
 
@@ -1015,6 +1046,95 @@ mod tests {
         let root_owner = CapabilityOwnerId::new_for_test(1);
         let child_owner = CapabilityOwnerId::new_for_test(2);
         (root, child, root_owner, child_owner)
+    }
+
+    #[test]
+    fn forged_zero_return_sequence_is_rejected() {
+        let mut ledger = CapabilityLedger::new();
+        let (root, child, root_owner, child_owner) = ids();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger.transfer_batch(
+            root,
+            &[CapabilityTransferRequest::new(capability, child)],
+            |id| match id {
+                id if id == root => Some((root_owner, InvocationState::Executing)),
+                id if id == child => Some((child_owner, InvocationState::Executing)),
+                _ => None,
+            },
+        ).unwrap()[0];
+        let record = ledger.transfers.get_mut(&transfer).unwrap();
+        record.state = CapabilityTransferState::Returned;
+        record.returned_at = Some(0);
+        let instance = ledger.instances.get_mut(&capability).unwrap();
+        instance.state = CapabilityInstanceState::Available;
+        instance.owner = root_owner;
+        assert_eq!(
+            ledger.validate_structure(),
+            Err(CapabilityRuntimeError::NonMonotonicReturnSequence)
+        );
+    }
+
+    #[test]
+    fn forged_return_sequence_gap_is_rejected() {
+        let mut ledger = CapabilityLedger::new();
+        let (root, child, root_owner, child_owner) = ids();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger.transfer_batch(
+            root,
+            &[CapabilityTransferRequest::new(capability, child)],
+            |id| match id {
+                id if id == root => Some((root_owner, InvocationState::Executing)),
+                id if id == child => Some((child_owner, InvocationState::Executing)),
+                _ => None,
+            },
+        ).unwrap()[0];
+        let record = ledger.transfers.get_mut(&transfer).unwrap();
+        record.state = CapabilityTransferState::Returned;
+        record.returned_at = Some(2);
+        ledger.next_return_sequence = Some(3);
+        let instance = ledger.instances.get_mut(&capability).unwrap();
+        instance.state = CapabilityInstanceState::Available;
+        instance.owner = root_owner;
+        assert_eq!(
+            ledger.validate_structure(),
+            Err(CapabilityRuntimeError::NonMonotonicReturnSequence)
+        );
+    }
+
+    #[test]
+    fn return_sequence_counter_rejects_missing_intermediate_sequence() {
+        let mut ledger = CapabilityLedger::new();
+        let (root, child, root_owner, child_owner) = ids();
+        let first = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let second = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfers = ledger.transfer_batch(
+            root,
+            &[
+                CapabilityTransferRequest::new(first, child),
+                CapabilityTransferRequest::new(second, child),
+            ],
+            |id| match id {
+                id if id == root => Some((root_owner, InvocationState::Executing)),
+                id if id == child => Some((child_owner, InvocationState::Executing)),
+                _ => None,
+            },
+        ).unwrap();
+        for transfer in &transfers {
+            let record = ledger.transfers.get_mut(transfer).unwrap();
+            record.state = CapabilityTransferState::Returned;
+        }
+        ledger.transfers.get_mut(&transfers[0]).unwrap().returned_at = Some(1);
+        ledger.transfers.get_mut(&transfers[1]).unwrap().returned_at = Some(3);
+        ledger.next_return_sequence = Some(4);
+        for capability in [first, second] {
+            let instance = ledger.instances.get_mut(&capability).unwrap();
+            instance.state = CapabilityInstanceState::Available;
+            instance.owner = root_owner;
+        }
+        assert_eq!(
+            ledger.validate_structure(),
+            Err(CapabilityRuntimeError::NonMonotonicReturnSequence)
+        );
     }
 
     #[test]
