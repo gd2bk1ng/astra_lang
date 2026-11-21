@@ -1,5 +1,6 @@
 use syntra_lang::{
-    Declaration, DiagnosticEngine, Expression, Lexer, Parser, SemanticVerifier, Statement,
+    validate_program_invariants, Declaration, DiagnosticEngine, Expression, Lexer, Parser,
+    SemanticReport, SemanticVerifier, Statement,
 };
 
 fn verify(source: &str) -> syntra_lang::SemanticReport<'_> {
@@ -40,7 +41,7 @@ fn valid_epistemic_resolution_and_declared_effects_pass() {
 
 
 #[test]
-fn epistemic_downgrade_into_deterministic_gate_is_rejected() {
+fn unbound_confidence_metadata_does_not_leak_into_unrelated_identifiers() {
     let source = concat!(
         "intent mission {\n",
         "  uncertainty { confidence 0.95 }\n",
@@ -52,14 +53,11 @@ fn epistemic_downgrade_into_deterministic_gate_is_rejected() {
 
     let report = verify(source);
 
-    let diagnostic = report
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.code == "SYN2002")
-        .expect("missing epistemic gate diagnostic");
-
-    assert!(diagnostic.message.contains("confidence 0.950"));
-    assert!(diagnostic.message.contains("control_gate"));
+    assert!(
+        report.is_success(),
+        "unassociated confidence metadata must not become verifier-global state: {:?}",
+        report.diagnostics
+    );
 }
 
 #[test]
@@ -170,8 +168,12 @@ fn verifier_preserves_borrowed_ast_source_provenance() {
         panic!("expected intent");
     };
 
-    let report = SemanticVerifier::new(source).verify_program(&program);
-    assert!(report.is_success());
+    let validated =
+        validate_program_invariants(program, source).expect("parsed fixture satisfies invariants");
+    let report = SemanticVerifier::new(source)
+        .verify(validated)
+        .expect("valid fixture should produce a verified program");
+    assert!(report.report().is_success());
     assert_eq!(&source[intent.span.start..intent.span.end], source);
 }
 
