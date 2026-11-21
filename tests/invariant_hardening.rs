@@ -46,7 +46,7 @@ fn catches_inverted_and_out_of_bounds_spans() {
         span: Span::new(20, 10),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("invalid span must fail");
+    let report = validate_program_invariants(program, source).expect_err("invalid span must fail");
     assert_eq!(report.errors.len(), 1);
     assert_eq!(report.errors[0].kind, AstInvariantKind::InvalidSpanBounds);
 
@@ -55,7 +55,7 @@ fn catches_inverted_and_out_of_bounds_spans() {
         span: Span::new(0, source.len() + 1),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("out-of-bounds span must fail");
+    let report = validate_program_invariants(program, source).expect_err("out-of-bounds span must fail");
     assert_eq!(report.errors.len(), 1);
     assert_eq!(report.errors[0].kind, AstInvariantKind::InvalidSpanBounds);
 }
@@ -68,7 +68,7 @@ fn catches_utf8_mid_character_spans() {
         span: Span::new(0, 1),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("mid-character span must fail");
+    let report = validate_program_invariants(program, source).expect_err("mid-character span must fail");
     assert_eq!(report.errors.len(), 1);
     assert_eq!(report.errors[0].kind, AstInvariantKind::Utf8BoundaryViolation);
 }
@@ -93,7 +93,7 @@ fn catches_child_containment_violation() {
         span: Span::new(0, source.len()),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("child outside parent must fail");
+    let report = validate_program_invariants(program, source).expect_err("child outside parent must fail");
     assert!(kinds(&report).contains(&AstInvariantKind::ContainmentViolation));
 }
 
@@ -121,7 +121,7 @@ fn catches_overlapping_declarations() {
         span: Span::new(0, source.len()),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("overlap must fail");
+    let report = validate_program_invariants(program, source).expect_err("overlap must fail");
     assert!(kinds(&report).contains(&AstInvariantKind::SiblingOrderViolation));
 }
 
@@ -141,7 +141,7 @@ fn catches_empty_non_empty_construct_span() {
         span: Span::new(0, source.len()),
     };
 
-    let report = validate_program_invariants(&program, source).expect_err("empty function span must fail");
+    let report = validate_program_invariants(program, source).expect_err("empty function span must fail");
     assert!(kinds(&report).contains(&AstInvariantKind::EmptyNodeSpan));
 }
 
@@ -162,7 +162,7 @@ fn catches_nested_statement_ordering() {
     };
     let program = Program { declarations: vec![Declaration::Function(function)], span: Span::new(0, source.len()) };
 
-    let report = validate_program_invariants(&program, source).expect_err("overlapping statements must fail");
+    let report = validate_program_invariants(program, source).expect_err("overlapping statements must fail");
     assert!(kinds(&report).contains(&AstInvariantKind::SiblingOrderViolation));
 }
 
@@ -184,7 +184,7 @@ fn catches_borrowed_text_from_another_source_buffer() {
         span: Span::new(0, source.len()),
     };
 
-    let report = validate_program_invariants(&program, source)
+    let report = validate_program_invariants(program, source)
         .expect_err("foreign borrowed text must fail provenance validation");
     assert!(kinds(&report).contains(&AstInvariantKind::SourceProvenanceViolation));
 }
@@ -206,7 +206,7 @@ fn catches_borrowed_text_outside_its_enclosing_node() {
         span: Span::new(0, 13),
     };
 
-    let report = validate_program_invariants(&program, source)
+    let report = validate_program_invariants(program, source)
         .expect_err("borrowed text outside its node span must fail provenance validation");
     assert!(kinds(&report).contains(&AstInvariantKind::SourceProvenanceViolation));
 }
