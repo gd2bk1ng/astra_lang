@@ -1170,6 +1170,95 @@ mod tests {
     }
 
     #[test]
+    fn forged_replacement_transfer_is_rejected_by_termination_snapshot() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+
+        let plan = ledger
+            .plan_termination(child, |id| {
+                (id == child).then_some(InvocationState::Executing)
+            })
+            .unwrap();
+        let version = ledger.version();
+
+        // This is intentionally a same-version forged replacement: the
+        // transfer remains structurally Active, but its authenticated source
+        // identity has changed underneath the staged plan.
+        ledger.transfers.get_mut(&transfer).unwrap().source_owner = child_owner;
+
+        assert_eq!(
+            ledger.commit_termination(&plan, |id| {
+                (id == child).then_some(InvocationState::Executing)
+            }),
+            Err(CapabilityRuntimeError::InvalidTerminationTransfer(transfer))
+        );
+        assert_eq!(ledger.version(), version);
+        assert_eq!(ledger.transfer(transfer).unwrap().state(), CapabilityTransferState::Active);
+        assert_eq!(
+            ledger.transfer(transfer).unwrap().source_owner(),
+            child_owner
+        );
+        assert_eq!(
+            ledger.instance(capability).unwrap().state(),
+            CapabilityInstanceState::InTransit { transfer }
+        );
+    }
+
+    #[test]
+    fn forged_replacement_transfer_is_rejected_by_abandonment_snapshot() {
+        let (root, child, root_owner, child_owner) = ids();
+        let mut ledger = CapabilityLedger::new();
+        let capability = ledger.grant(root_owner, CapabilityId::ReadFile).unwrap();
+        let transfer = ledger
+            .transfer_batch(
+                root,
+                &[CapabilityTransferRequest::new(capability, child)],
+                |id| match id {
+                    id if id == root => Some((root_owner, InvocationState::Executing)),
+                    id if id == child => Some((child_owner, InvocationState::Executing)),
+                    _ => None,
+                },
+            )
+            .unwrap()[0];
+
+        let plan = ledger
+            .plan_abandonment(child, |id| {
+                (id == child).then_some(InvocationState::Executing)
+            })
+            .unwrap();
+        let version = ledger.version();
+
+        ledger.transfers.get_mut(&transfer).unwrap().source_owner = child_owner;
+
+        assert_eq!(
+            ledger.commit_abandonment(&plan),
+            Err(CapabilityRuntimeError::InvalidTerminationTransfer(transfer))
+        );
+        assert_eq!(ledger.version(), version);
+        assert_eq!(ledger.transfer(transfer).unwrap().state(), CapabilityTransferState::Active);
+        assert_eq!(
+            ledger.transfer(transfer).unwrap().source_owner(),
+            child_owner
+        );
+        assert_eq!(
+            ledger.instance(capability).unwrap().state(),
+            CapabilityInstanceState::InTransit { transfer }
+        );
+    }
+
+    #[test]
     fn capability_kind_and_instance_identity_are_distinct() {
         let (_, _, root_owner, _) = ids();
         let mut ledger = CapabilityLedger::new();
