@@ -69,6 +69,7 @@ pub struct EpistemicBinding<'src> {
     pub ty: EpistemicType<'src>,
     pub epistemic_state: EpistemicState,
     pub contract: ContractMetadata<'src>,
+    confidence: Option<f64>,
     pub span: Span,
 }
 
@@ -79,8 +80,18 @@ impl<'src> EpistemicBinding<'src> {
             ty: EpistemicType::new(type_name, state),
             epistemic_state: state,
             contract: ContractMetadata::default(),
+            confidence: None,
             span,
         }
+    }
+
+    /// Return the confidence currently attached to this binding, if any.
+    pub fn confidence(&self) -> Option<f64> {
+        self.confidence
+    }
+
+    pub(crate) fn set_confidence(&mut self, confidence: Option<f64>) {
+        self.confidence = confidence;
     }
 
     fn update_state_unchecked(&mut self, state: EpistemicState) {
