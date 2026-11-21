@@ -193,6 +193,7 @@ pub(crate) struct CapabilityTerminationPlan {
     expected_version: u64,
     invocation: InvocationId,
     transfers: Vec<TransferId>,
+    snapshots: Vec<CapabilityTransferRecord>,
 }
 
 impl CapabilityTerminationPlan {
@@ -208,6 +209,7 @@ pub(crate) struct CapabilityAbandonmentPlan {
     expected_version: u64,
     invocation: InvocationId,
     transfers: Vec<TransferId>,
+    snapshots: Vec<CapabilityTransferRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -533,20 +535,22 @@ impl CapabilityLedger {
             return Err(CapabilityRuntimeError::InvalidInvocationState(invocation));
         }
 
-        let transfers = self
+        let snapshots = self
             .transfers
             .values()
             .filter(|record| {
                 record.destination_invocation == invocation
                     && record.state == CapabilityTransferState::Active
             })
-            .map(|record| record.id)
-            .collect();
+            .copied()
+            .collect::<Vec<_>>();
+        let transfers = snapshots.iter().map(|record| record.id).collect();
 
         Ok(CapabilityTerminationPlan {
             expected_version: self.version,
             invocation,
             transfers,
+            snapshots,
         })
     }
 
@@ -564,16 +568,18 @@ impl CapabilityLedger {
             return Err(CapabilityRuntimeError::InvalidInvocationState(invocation));
         }
 
-        let transfers = self.transfers.values()
+        let snapshots = self.transfers.values()
             .filter(|record| record.destination_invocation == invocation
                 && record.state == CapabilityTransferState::Active)
-            .map(|record| record.id)
-            .collect();
+            .copied()
+            .collect::<Vec<_>>();
+        let transfers = snapshots.iter().map(|record| record.id).collect();
 
         Ok(CapabilityAbandonmentPlan {
             expected_version: self.version,
             invocation,
             transfers,
+            snapshots,
         })
     }
 
@@ -603,10 +609,23 @@ impl CapabilityLedger {
             ));
         }
 
+        if plan.transfers.len() != plan.snapshots.len()
+            || plan.transfers.iter().zip(&plan.snapshots).any(|(id, snapshot)| {
+                *id != snapshot.id
+            })
+        {
+            return Err(CapabilityRuntimeError::InvalidTerminationTransfer(
+                plan.transfers.first().copied().unwrap_or(TransferId(0)),
+            ));
+        }
+
         let mut staged = Vec::with_capacity(plan.transfers.len());
-        for transfer_id in &plan.transfers {
+        for (transfer_id, snapshot) in plan.transfers.iter().zip(&plan.snapshots) {
             let record = self.transfers.get(transfer_id)
                 .ok_or(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id))?;
+            if record != snapshot {
+                return Err(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id));
+            }
             if record.state != CapabilityTransferState::Active
                 || record.destination_invocation != plan.invocation
                 || record.returned_at.is_some()
@@ -684,11 +703,24 @@ impl CapabilityLedger {
         let mut next_return_sequence = self.next_return_sequence;
         let mut staged_returns = Vec::new();
 
-        for transfer_id in &plan.transfers {
+        if plan.transfers.len() != plan.snapshots.len()
+            || plan.transfers.iter().zip(&plan.snapshots).any(|(id, snapshot)| {
+                *id != snapshot.id
+            })
+        {
+            return Err(CapabilityRuntimeError::InvalidTerminationTransfer(
+                plan.transfers.first().copied().unwrap_or(TransferId(0)),
+            ));
+        }
+
+        for (transfer_id, snapshot) in plan.transfers.iter().zip(&plan.snapshots) {
             let record = self
                 .transfers
                 .get(transfer_id)
                 .ok_or(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id))?;
+            if record != snapshot {
+                return Err(CapabilityRuntimeError::InvalidTerminationTransfer(*transfer_id));
+            }
             if record.state != CapabilityTransferState::Active
                 || record.destination_invocation != plan.invocation
             {
