@@ -124,6 +124,35 @@ impl<'a> SemanticReport<'a> {
     }
 }
 
+/// A semantically verified SyntraLang program.
+///
+/// The contained AST can only enter this wrapper through SemanticVerifier::verify,
+/// which requires a ValidatedProgram first. The wrapper exposes no mutable AST
+/// or public constructor.
+#[derive(Debug)]
+pub struct VerifiedProgram<'src> {
+    validated: crate::validated::ValidatedProgram<'src>,
+    report: SemanticReport<'src>,
+}
+
+impl<'src> VerifiedProgram<'src> {
+    pub fn validated_program(&self) -> &crate::validated::ValidatedProgram<'src> {
+        &self.validated
+    }
+
+    pub fn program(&self) -> &Program<'src> {
+        self.validated.program()
+    }
+
+    pub fn source(&self) -> &'src str {
+        self.validated.source()
+    }
+
+    pub fn report(&self) -> &SemanticReport<'src> {
+        &self.report
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CallableParameter<'src> {
     name: &'src str,
@@ -164,9 +193,15 @@ impl<'src> CallableRegistry<'src> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+struct NumericBound {
+    value: f64,
+    inclusive: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct NumericConstraint {
-    lower: Option<f64>,
-    upper: Option<f64>,
+    lower: Option<NumericBound>,
+    upper: Option<NumericBound>,
 }
 
 /// Semantic verifier over a borrowed SyntraLang program.
@@ -175,7 +210,6 @@ pub struct SemanticVerifier<'src> {
     source: &'src str,
     diagnostics: Vec<Diagnostic<'src>>,
     declared_effects: BTreeSet<&'src str>,
-    epistemic_confidence: Option<f64>,
     epistemic_environment: EpistemicEnvironment<'src>,
     callable_registry: CallableRegistry<'src>,
     expected_return_type: Option<SemanticType<'src>>,
@@ -187,19 +221,58 @@ impl<'src> SemanticVerifier<'src> {
             source,
             diagnostics: Vec::new(),
             declared_effects: BTreeSet::new(),
-            epistemic_confidence: None,
             epistemic_environment: EpistemicEnvironment::new(),
             callable_registry: CallableRegistry::default(),
             expected_return_type: None,
         }
     }
 
-    pub fn verify_program(mut self, program: &Program<'src>) -> SemanticReport<'src> {
+    /// Verify a structurally validated program in an isolated semantic run.
+    pub fn verify(
+        &self,
+        program: crate::validated::ValidatedProgram<'src>,
+    ) -> Result<VerifiedProgram<'src>, Vec<Diagnostic<'src>>> {
+        let mut run = SemanticVerifier::new(program.source());
+        let report = run.verify_validated_program(&program);
+
+        if report.is_success() {
+            Ok(VerifiedProgram {
+                validated: program,
+                report,
+            })
+        } else {
+            Err(report.diagnostics)
+        }
+    }
+
+    fn verify_validated_program(
+        &mut self,
+        program: &crate::validated::ValidatedProgram<'src>,
+    ) -> SemanticReport<'src> {
         // Pass 1: collect every top-level callable before checking any body.
         // This makes call resolution independent of source declaration order.
-        self.collect_callable_declarations(program);
+        self.collect_callable_declarations(program.program());
 
         // Pass 2: verify declaration bodies against the completed registry.
+        for declaration in &program.program().declarations {
+            match declaration {
+                Declaration::Function(function) => self.verify_function(function),
+                Declaration::Intent(intent) => self.verify_intent(intent),
+                Declaration::Rule(rule) => self.verify_rule(rule),
+            }
+        }
+
+        SemanticReport {
+            diagnostics: std::mem::take(&mut self.diagnostics),
+        }
+    }
+
+    #[deprecated(note = "use validate_program_invariants followed by SemanticVerifier::verify")]
+    pub fn verify_program(mut self, program: &Program<'src>) -> SemanticReport<'src> {
+        // Legacy compatibility only. This method intentionally does not create
+        // a VerifiedProgram and therefore is not the canonical verification API.
+        self.collect_callable_declarations(program);
+
         for declaration in &program.declarations {
             match declaration {
                 Declaration::Function(function) => self.verify_function(function),
@@ -270,7 +343,6 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_function(&mut self, function: &Function<'src>) {
         self.declared_effects.clear();
-        self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
         let previous_return_type = self.expected_return_type.take();
@@ -366,8 +438,6 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_intent(&mut self, intent: &Intent<'src>) {
         let previous_effects = std::mem::take(&mut self.declared_effects);
-        let previous_confidence = self.epistemic_confidence.take();
-
         for member in &intent.members {
             if let IntentValue::Effects(effects) = &member.value {
                 for item in &effects.items {
@@ -397,7 +467,7 @@ impl<'src> SemanticVerifier<'src> {
                 IntentValue::Governance(governance) => self.verify_governance(governance),
                 IntentValue::Block(block) => {
                     // Intent-owned blocks form their own lexical scope while
-                    // inheriting the intent's declared effects and confidence.
+                    // inheriting the intent's declared effects.
                     self.epistemic_environment.enter_scope();
                     self.verify_block(block);
                     self.epistemic_environment.exit_scope();
@@ -407,7 +477,6 @@ impl<'src> SemanticVerifier<'src> {
         }
 
         self.declared_effects = previous_effects;
-        self.epistemic_confidence = previous_confidence;
     }
 
     fn verify_goal(&mut self, goal: &Goal<'src>) {
@@ -442,7 +511,10 @@ impl<'src> SemanticVerifier<'src> {
                 UncertaintyMember::Confidence { value, span } => {
                     match self.literal_number(value) {
                         Some(confidence) if (0.0..=1.0).contains(&confidence) => {
-                            self.epistemic_confidence = Some(confidence);
+                            // The current syntax has no binding name on a confidence
+                            // member. Validate it, but do not copy it into unrelated
+                            // bindings or retain it as verifier-global state.
+                            let _ = confidence;
                         }
                         Some(confidence) => self.error(
                             CODE_EPISTEMIC_RANGE,
@@ -499,23 +571,21 @@ impl<'src> SemanticVerifier<'src> {
                             lower: None,
                             upper: None,
                         });
-                        entry.lower = match constraint.lower {
-                            Some(bound) => Some(entry.lower.map_or(bound, |old| old.max(bound))),
-                            None => entry.lower,
-                        };
-                        entry.upper = match constraint.upper {
-                            Some(bound) => Some(entry.upper.map_or(bound, |old| old.min(bound))),
-                            None => entry.upper,
-                        };
+                        entry.lower = merge_lower_bound(entry.lower, constraint.lower);
+                        entry.upper = merge_upper_bound(entry.upper, constraint.upper);
 
-                        if let (Some(lower), Some(upper)) = (entry.lower, entry.upper)
-                            && lower > upper
-                        {
-                            self.error(
-                                CODE_GOVERNANCE_CONTRADICTION,
-                                format!("governance constraints on '{name}' are contradictory"),
-                                *span,
-                            );
+                        if let (Some(lower), Some(upper)) = (entry.lower, entry.upper) {
+                            let contradictory = lower.value > upper.value
+                                || (lower.value == upper.value
+                                    && (!lower.inclusive || !upper.inclusive));
+
+                            if contradictory {
+                                self.error(
+                                    CODE_GOVERNANCE_CONTRADICTION,
+                                    format!("governance constraints on '{name}' are contradictory"),
+                                    *span,
+                                );
+                            }
                         }
                     } else {
                         let _ = self.infer_expression(value);
@@ -618,16 +688,21 @@ impl<'src> SemanticVerifier<'src> {
     fn infer_expression(&mut self, expression: &Expression<'src>) -> ConfidenceState {
         match expression {
             Expression::Identifier(name, _) => {
-                // Resolve the active epistemic binding independently of confidence.
-                // Unresolved identifiers remain compatible with existing verifier behavior.
-                let _binding = self.epistemic_environment.lookup(name);
+                let Some(binding) = self.epistemic_environment.lookup(name) else {
+                    return ConfidenceState::Unknown;
+                };
 
-                match self.epistemic_confidence {
+                match binding.confidence() {
                     Some(confidence) if confidence < 1.0 => {
                         ConfidenceState::Probabilistic { confidence }
                     }
                     Some(_) => ConfidenceState::Deterministic,
-                    None => ConfidenceState::Unknown,
+                    None => match binding.epistemic_state {
+                        EpistemicState::Known | EpistemicState::Resolved => {
+                            ConfidenceState::Deterministic
+                        }
+                        _ => ConfidenceState::Unknown,
+                    },
                 }
             },
             Expression::Literal(_, _) => ConfidenceState::Deterministic,
@@ -1005,22 +1080,86 @@ impl<'src> SemanticVerifier<'src> {
         let value = self.literal_number(right)?;
 
         match operator {
-            BinaryOp::Greater | BinaryOp::GreaterEqual => {
-                Some((*name, NumericConstraint { lower: Some(value), upper: None }))
-            }
-            BinaryOp::Less | BinaryOp::LessEqual => {
-                Some((*name, NumericConstraint { lower: None, upper: Some(value) }))
-            }
+            BinaryOp::Greater => Some((
+                *name,
+                NumericConstraint {
+                    lower: Some(NumericBound { value, inclusive: false }),
+                    upper: None,
+                },
+            )),
+            BinaryOp::GreaterEqual => Some((
+                *name,
+                NumericConstraint {
+                    lower: Some(NumericBound { value, inclusive: true }),
+                    upper: None,
+                },
+            )),
+            BinaryOp::Less => Some((
+                *name,
+                NumericConstraint {
+                    lower: None,
+                    upper: Some(NumericBound { value, inclusive: false }),
+                },
+            )),
+            BinaryOp::LessEqual => Some((
+                *name,
+                NumericConstraint {
+                    lower: None,
+                    upper: Some(NumericBound { value, inclusive: true }),
+                },
+            )),
             BinaryOp::Equal => Some((
                 *name,
                 NumericConstraint {
-                    lower: Some(value),
-                    upper: Some(value),
+                    lower: Some(NumericBound { value, inclusive: true }),
+                    upper: Some(NumericBound { value, inclusive: true }),
                 },
             )),
             _ => None,
         }
     }
+
+fn merge_lower_bound(
+    current: Option<NumericBound>,
+    incoming: Option<NumericBound>,
+) -> Option<NumericBound> {
+    match (current, incoming) {
+        (None, bound) | (bound, None) => bound,
+        (Some(current), Some(incoming)) => {
+            if incoming.value > current.value {
+                Some(incoming)
+            } else if incoming.value < current.value {
+                Some(current)
+            } else {
+                Some(NumericBound {
+                    value: current.value,
+                    inclusive: current.inclusive && incoming.inclusive,
+                })
+            }
+        }
+    }
+}
+
+fn merge_upper_bound(
+    current: Option<NumericBound>,
+    incoming: Option<NumericBound>,
+) -> Option<NumericBound> {
+    match (current, incoming) {
+        (None, bound) | (bound, None) => bound,
+        (Some(current), Some(incoming)) => {
+            if incoming.value < current.value {
+                Some(incoming)
+            } else if incoming.value > current.value {
+                Some(current)
+            } else {
+                Some(NumericBound {
+                    value: current.value,
+                    inclusive: current.inclusive && incoming.inclusive,
+                })
+            }
+        }
+    }
+}
 
     fn error(&mut self, code: &'static str, message: impl Into<String>, span: Span) {
         self.diagnostics.push(DiagnosticEngine::semantic_error(
@@ -1085,11 +1224,22 @@ fn analyze_expression_flow(expression: &Expression<'_>) -> FlowOutcome {
             FlowOutcome::FallsThrough
         }
         Expression::Unary { operand, .. } => analyze_expression_flow(operand),
-        Expression::Binary { left, right, .. } => {
+        Expression::Binary {
+            left,
+            operator,
+            right,
+            ..
+        } => {
             if analyze_expression_flow(left) == FlowOutcome::Returns {
                 return FlowOutcome::Returns;
             }
-            analyze_expression_flow(right)
+
+            match operator {
+                // The RHS of a short-circuit operator is conditional, so a
+                // return occurring only there cannot guarantee callable return.
+                BinaryOp::And | BinaryOp::Or => FlowOutcome::FallsThrough,
+                _ => analyze_expression_flow(right),
+            }
         }
         Expression::SelfModify { patch, .. } => analyze_expression_flow(patch),
         Expression::Identifier(_, _)
