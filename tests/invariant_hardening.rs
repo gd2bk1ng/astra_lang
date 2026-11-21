@@ -35,7 +35,7 @@ fn valid_ast_passes_invariant_validation() {
     );
 
     let program = parse(source);
-    assert!(validate_program_invariants(&program, source).is_ok());
+    assert!(validate_program_invariants(program, source).is_ok());
 }
 
 #[test]
