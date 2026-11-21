@@ -379,7 +379,6 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_rule(&mut self, rule: &Rule<'src>) {
         self.declared_effects.clear();
-        self.epistemic_confidence = None;
         self.epistemic_environment = EpistemicEnvironment::new();
 
         let previous_return_type = self.expected_return_type.take();
@@ -1120,6 +1119,16 @@ impl<'src> SemanticVerifier<'src> {
         }
     }
 
+    fn error(&mut self, code: &'static str, message: impl Into<String>, span: Span) {
+        self.diagnostics.push(DiagnosticEngine::semantic_error(
+            self.source,
+            code,
+            message,
+            span,
+        ));
+    }
+}
+
 fn merge_lower_bound(
     current: Option<NumericBound>,
     incoming: Option<NumericBound>,
@@ -1159,16 +1168,6 @@ fn merge_upper_bound(
                 })
             }
         }
-    }
-}
-
-    fn error(&mut self, code: &'static str, message: impl Into<String>, span: Span) {
-        self.diagnostics.push(DiagnosticEngine::semantic_error(
-            self.source,
-            code,
-            message,
-            span,
-        ));
     }
 }
 
