@@ -3,11 +3,17 @@ use syntra_lang::{
     SemanticReport, SemanticVerifier, Statement,
 };
 
-fn verify(source: &str) -> syntra_lang::SemanticReport<'_> {
+fn verify(source: &str) -> SemanticReport<'_> {
     let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
     let mut parser = Parser::new(&tokens);
     let program = parser.parse_program().expect("parsing succeeds");
-    SemanticVerifier::new(source).verify_program(&program)
+    let validated =
+        validate_program_invariants(program, source).expect("parsed fixture satisfies invariants");
+
+    match SemanticVerifier::new(source).verify(validated) {
+        Ok(verified) => verified.report().clone(),
+        Err(diagnostics) => SemanticReport { diagnostics },
+    }
 }
 
 #[test]
