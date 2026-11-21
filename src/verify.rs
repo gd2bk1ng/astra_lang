@@ -13,6 +13,7 @@ use crate::ast::*;
 use crate::diagnostics::{Diagnostic, DiagnosticEngine};
 use crate::epistemic::{EpistemicBinding, EpistemicEnvironment, EpistemicState};
 use crate::tokens::Span;
+use crate::validated::ValidatedProgram;
 use std::collections::{BTreeMap, BTreeSet};
 
 const CODE_EPISTEMIC_RANGE: &str = "SYN2001";
@@ -131,12 +132,12 @@ impl<'a> SemanticReport<'a> {
 /// or public constructor.
 #[derive(Debug)]
 pub struct VerifiedProgram<'src> {
-    validated: crate::validated::ValidatedProgram<'src>,
+    validated: ValidatedProgram<'src>,
     report: SemanticReport<'src>,
 }
 
 impl<'src> VerifiedProgram<'src> {
-    pub fn validated_program(&self) -> &crate::validated::ValidatedProgram<'src> {
+    pub fn validated_program(&self) -> &ValidatedProgram<'src> {
         &self.validated
     }
 
@@ -230,7 +231,7 @@ impl<'src> SemanticVerifier<'src> {
     /// Verify a structurally validated program in an isolated semantic run.
     pub fn verify(
         &self,
-        program: crate::validated::ValidatedProgram<'src>,
+        program: ValidatedProgram<'src>,
     ) -> Result<VerifiedProgram<'src>, Vec<Diagnostic<'src>>> {
         let mut run = SemanticVerifier::new(program.source());
         let report = run.verify_validated_program(&program);
@@ -247,7 +248,7 @@ impl<'src> SemanticVerifier<'src> {
 
     fn verify_validated_program(
         &mut self,
-        program: &crate::validated::ValidatedProgram<'src>,
+        program: &ValidatedProgram<'src>,
     ) -> SemanticReport<'src> {
         // Pass 1: collect every top-level callable before checking any body.
         // This makes call resolution independent of source declaration order.
