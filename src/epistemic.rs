@@ -90,9 +90,6 @@ impl<'src> EpistemicBinding<'src> {
         self.confidence
     }
 
-    pub(crate) fn set_confidence(&mut self, confidence: Option<f64>) {
-        self.confidence = confidence;
-    }
 
     fn update_state_unchecked(&mut self, state: EpistemicState) {
         self.epistemic_state = state;
@@ -163,18 +160,6 @@ impl<'src> EpistemicEnvironment<'src> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
 
-    pub(crate) fn set_confidence(
-        &mut self,
-        name: &str,
-        confidence: Option<f64>,
-    ) -> Result<(), EpistemicTransitionError> {
-        let current_index = self.scopes.len() - 1;
-        let binding = self.scopes[current_index]
-            .get_mut(name)
-            .ok_or(EpistemicTransitionError::BindingNotFound)?;
-        binding.set_confidence(confidence);
-        Ok(())
-    }
 
     /// Attach or replace the transition contract visible to this scope.
     ///
