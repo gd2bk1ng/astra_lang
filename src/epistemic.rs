@@ -163,6 +163,19 @@ impl<'src> EpistemicEnvironment<'src> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
 
+    pub(crate) fn set_confidence(
+        &mut self,
+        name: &str,
+        confidence: Option<f64>,
+    ) -> Result<(), EpistemicTransitionError> {
+        let current_index = self.scopes.len() - 1;
+        let binding = self.scopes[current_index]
+            .get_mut(name)
+            .ok_or(EpistemicTransitionError::BindingNotFound)?;
+        binding.set_confidence(confidence);
+        Ok(())
+    }
+
     /// Attach or replace the transition contract visible to this scope.
     ///
     /// Inherited bindings are copied into the current scope before mutation,
