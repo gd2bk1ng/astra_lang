@@ -13,6 +13,7 @@ pub mod lexer;
 pub mod parser;
 pub mod tokens;
 pub mod verify;
+pub mod validated;
 
 // The lexer and token model now form the borrowed source boundary. Parser and
 // AST modules should build on these lifetime contracts rather than introduce
@@ -28,5 +29,6 @@ pub use parser::{ParseError, ParseReport, Parser, TokenCursor};
 pub use tokens::{Span, Token, TokenKind};
 pub use verify::{
     Capability, CapabilityError, CapabilityLedger, SemanticReport,
-    SemanticType, SemanticVerifier,
+    SemanticType, SemanticVerifier, VerifiedProgram,
 };
+pub use validated::ValidatedProgram;
