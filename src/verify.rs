@@ -1614,51 +1614,6 @@ mod adversarial_type_propagation_tests {
     }
 
     #[test]
-    fn binding_confidence_is_isolated_between_identifiers_and_scopes() {
-        let mut v = sample_verifier();
-
-        v.register_local_binding("certain", SemanticType::Integer, span());
-        v.register_local_binding("uncertain", SemanticType::Integer, span());
-
-        v.epistemic_environment
-            .set_confidence("certain", Some(1.0))
-            .expect("certain binding exists");
-        v.epistemic_environment
-            .set_confidence("uncertain", Some(0.25))
-            .expect("uncertain binding exists");
-
-        assert_eq!(
-            v.infer_expression(&Expression::Identifier("certain", span())),
-            ConfidenceState::Deterministic
-        );
-        assert_eq!(
-            v.infer_expression(&Expression::Identifier("uncertain", span())),
-            ConfidenceState::Probabilistic { confidence: 0.25 }
-        );
-
-        v.epistemic_environment.enter_scope();
-        v.register_local_binding("shadowed", SemanticType::Integer, span());
-        v.epistemic_environment
-            .set_confidence("shadowed", Some(0.4))
-            .expect("shadowed binding exists");
-
-        assert_eq!(
-            v.infer_expression(&Expression::Identifier("shadowed", span())),
-            ConfidenceState::Probabilistic { confidence: 0.4 }
-        );
-        v.epistemic_environment.exit_scope();
-
-        assert_eq!(
-            v.infer_expression(&Expression::Identifier("certain", span())),
-            ConfidenceState::Deterministic
-        );
-        assert_eq!(
-            v.infer_expression(&Expression::Identifier("uncertain", span())),
-            ConfidenceState::Probabilistic { confidence: 0.25 }
-        );
-    }
-
-    #[test]
     fn adversarial_epistemic_independence_and_shadowing() {
         let mut v = sample_verifier();
 
