@@ -63,7 +63,7 @@ pub struct ContractMetadata<'src> {
     pub transition: Option<EpistemicTransitionContract>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EpistemicBinding<'src> {
     pub name: &'src str,
     pub ty: EpistemicType<'src>,
@@ -109,7 +109,7 @@ pub enum EpistemicTransitionError {
     TargetStateNotAllowed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EpistemicEnvironment<'src> {
     scopes: Vec<HashMap<&'src str, EpistemicBinding<'src>>>,
 }
