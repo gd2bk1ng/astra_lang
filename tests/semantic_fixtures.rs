@@ -170,8 +170,9 @@ fn verifier_preserves_borrowed_ast_source_provenance() {
     let mut parser = Parser::new(&tokens);
     let program = parser.parse_program().expect("parsing succeeds");
 
-    let Declaration::Intent(intent) = &program.declarations[0] else {
-        panic!("expected intent");
+    let intent_span = match &program.declarations[0] {
+        Declaration::Intent(intent) => intent.span,
+        _ => panic!("expected intent"),
     };
 
     let validated =
@@ -180,7 +181,7 @@ fn verifier_preserves_borrowed_ast_source_provenance() {
         .verify(validated)
         .expect("valid fixture should produce a verified program");
     assert!(report.report().is_success());
-    assert_eq!(&source[intent.span.start..intent.span.end], source);
+    assert_eq!(&source[intent_span.start..intent_span.end], source);
 }
 
 
