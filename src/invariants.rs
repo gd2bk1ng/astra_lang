@@ -40,7 +40,7 @@ pub fn validate_program_invariants<'src>(
     let mut validator = Validator { source, errors: Vec::new() };
 
     validator.check_span(program.span, "program", false);
-    validator.validate_source_provenance(program);
+    validator.validate_source_provenance(&program);
 
     let mut previous = None;
     for declaration in &program.declarations {
