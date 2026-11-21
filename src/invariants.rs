@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::tokens::Span;
+use crate::validated::ValidatedProgram;
 use std::borrow::Cow;
 
 /// Structural categories reported by AST invariant validation.
@@ -33,9 +34,9 @@ pub struct AstInvariantReport<'a> {
 /// containment, ordering, and UTF-8 safety, but does not perform semantic
 /// verification.
 pub fn validate_program_invariants<'src>(
-    program: &Program<'src>,
+    program: Program<'src>,
     source: &'src str,
-) -> Result<(), AstInvariantReport<'src>> {
+) -> Result<ValidatedProgram<'src>, AstInvariantReport<'src>> {
     let mut validator = Validator { source, errors: Vec::new() };
 
     validator.check_span(program.span, "program", false);
@@ -51,7 +52,10 @@ pub fn validate_program_invariants<'src>(
         previous = Some(span);
     }
 
-    validator.finish()
+    match validator.finish() {
+        Ok(()) => Ok(ValidatedProgram::new(program, source)),
+        Err(report) => Err(report),
+    }
 }
 
 struct Validator<'src> {
